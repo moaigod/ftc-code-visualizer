@@ -42,6 +42,9 @@ pub struct VisualizerApp {
     field_pollen: Vec<Pollen>,
     pollen_projectile: Option<PollenProjectile>,
     pollen_status: String,
+    drive_wheel_power: [f32; 4],
+    drive_wheel_velocity: [f32; 4],
+    shooter_motor_power: f32,
 }
 
 impl Default for VisualizerApp {
@@ -63,6 +66,9 @@ impl Default for VisualizerApp {
             field_pollen: starting_field_pollen(),
             pollen_projectile: None,
             pollen_status: "4 preloaded pollen onboard.".to_owned(),
+            drive_wheel_power: [0.0; 4],
+            drive_wheel_velocity: [0.0; 4],
+            shooter_motor_power: 0.8,
         }
     }
 }
@@ -164,7 +170,11 @@ impl VisualizerApp {
         }
 
         let heading = self.heading_deg.to_radians();
-        let speed = SHOT_SPEED_IN_S;
+        let speed = SHOT_SPEED_IN_S * self.shooter_motor_power;
+        if speed <= 0.1 {
+            self.pollen_status = "Shooter motor power is zero.".to_owned();
+            return;
+        }
         let start_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 1.0);
         let start_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 1.0);
         self.pollen_projectile = Some(PollenProjectile {
@@ -220,6 +230,8 @@ impl VisualizerApp {
             }
             "runtime" | "elapsedtime" | "elapsed_seconds" => return format!("{:.2} s", self.elapsed_seconds),
             "pollen" | "pollencount" | "pollen_count" | "robot.pollen" => return format!("{}/4", self.pollen_count),
+            "shootervelocity" | "shooter_velocity" | "outtaker.getvelocity()" | "shooter.getvelocity()" => return format!("{:.0} rpm", self.shooter_motor_power * 6000.0),
+            "shooterpower" | "shooter_power" | "outtaker.getpower()" | "shooter.getpower()" => return format!("{:.2}", self.shooter_motor_power),
             "gamepad1.left_stick_x" | "gamepad1.leftstickx" => return format!("{:.2}", self.stick_strafe),
             "gamepad1.left_stick_y" | "gamepad1.leftsticky" => return format!("{:.2}", self.stick_forward),
             "gamepad1.right_stick_x" | "gamepad1.rightstickx" => return format!("{:.2}", self.stick_turn),
@@ -239,7 +251,21 @@ impl VisualizerApp {
         }
 
         if key.contains(".getvelocity()") {
-            return format!("{} (requires a simulated motor or live motor data)", expression);
+            let motor = key.split('.').next().unwrap_or("");
+            let index = if motor.contains("frontleft") { Some(0) }
+                else if motor.contains("frontright") { Some(1) }
+                else if motor.contains("backleft") { Some(2) }
+                else if motor.contains("backright") { Some(3) } else { None };
+            if let Some(i) = index { return format!("{:.1} in/s", self.drive_wheel_velocity[i]); }
+            return format!("{} (no matching simulated motor)", expression);
+        }
+        if key.contains(".getpower()") {
+            let motor = key.split('.').next().unwrap_or("");
+            let index = if motor.contains("frontleft") { Some(0) }
+                else if motor.contains("frontright") { Some(1) }
+                else if motor.contains("backleft") { Some(2) }
+                else if motor.contains("backright") { Some(3) } else { None };
+            if let Some(i) = index { return format!("{:.2}", self.drive_wheel_power[i]); }
         }
 
         format!("{} (expression not evaluated)", expression)
@@ -264,6 +290,8 @@ impl VisualizerApp {
             let mut wheels = [f + s + r, f - s - r, f - s + r, f + s - r];
             let largest = wheels.iter().fold(1.0_f32, |m, p| m.max(p.abs()));
             for power in &mut wheels { *power /= largest; }
+            self.drive_wheel_power = wheels;
+            self.drive_wheel_velocity = wheels.map(|power| power * MAX_SPEED_IN_S);
 
             // Convert wheel powers back into robot-relative forward, strafe and turn.
             let target_forward = (wheels[0] + wheels[1] + wheels[2] + wheels[3]) * 0.25;
@@ -365,8 +393,8 @@ fn starting_field_pollen() -> Vec<Pollen> {
 
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
-        pollen.push(Pollen { x: 8.0 + offset, y: 8.0 });
-        pollen.push(Pollen { x: 136.0 - offset, y: 136.0 });
+        pollen.push(Pollen { x: offset, y: 0.0 });
+        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN });
     }
 
     pollen
@@ -444,11 +472,20 @@ impl eframe::App for VisualizerApp {
             }
             ui.label(format!("Input: F {:.2} · S {:.2} · R {:.2}",
                 self.stick_forward, self.stick_strafe, self.stick_turn));
+            ui.collapsing("Drive motor power / velocity", |ui| {
+                for (name, i) in [("Front left", 0), ("Front right", 1), ("Back left", 2), ("Back right", 3)] {
+                    ui.label(format!("{name}: power {:+.2} · velocity {:+.1} in/s",
+                        self.drive_wheel_power[i], self.drive_wheel_velocity[i]));
+                }
+            });
             ui.add_space(8.0);
             ui.separator();
             ui.heading("Pollen");
             ui.strong(format!("Carrying: {}/4", self.pollen_count));
             ui.label(&self.pollen_status);
+            ui.add(egui::Slider::new(&mut self.shooter_motor_power, 0.0..=1.0).text("Shooter motor power"));
+            ui.label(format!("Shooter velocity: {:.0} rpm", self.shooter_motor_power * 6000.0));
+            ui.label(format!("Pollen launch velocity: {:.1} in/s", SHOT_SPEED_IN_S * self.shooter_motor_power));
             ui.horizontal(|ui| {
                 if ui.button("Intake pollen [E]").clicked() {
                     self.intake_pollen();
