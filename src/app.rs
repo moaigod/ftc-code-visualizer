@@ -46,7 +46,6 @@ pub struct VisualizerApp {
     pollen_status: String,
     drive_wheel_power: [f32; 4],
     drive_wheel_velocity: [f32; 4],
-    motor_names: [String; 4],
     previous_gamepad_buttons: Vec<String>,
     flower_intake_cooldown: f32,
 }
@@ -72,12 +71,6 @@ impl Default for VisualizerApp {
             pollen_status: "4 preloaded pollen onboard.".to_owned(),
             drive_wheel_power: [0.0; 4],
             drive_wheel_velocity: [0.0; 4],
-            motor_names: [
-                "frontLeft".to_owned(),
-                "frontRight".to_owned(),
-                "backLeft".to_owned(),
-                "backRight".to_owned(),
-            ],
             previous_gamepad_buttons: Vec::new(),
             flower_intake_cooldown: 0.0,
         }
@@ -172,12 +165,20 @@ impl VisualizerApp {
         find_gamepad_actions(&mode.source)
     }
 
-    fn run_gamepad_action(&mut self, action: &str) {
+    fn run_gamepad_action(&mut self, button: &str, action: &str) {
         let normalized = action.to_ascii_lowercase();
         if normalized.contains("intake") {
             self.intake_pollen();
         } else if normalized.contains("outtake") || normalized.contains("shooter") {
-            self.shoot_pollen();
+            let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i)).map(|m| m.source.as_str()).unwrap_or("");
+            let program = crate::ftc_interpreter::interpret(source);
+            let target = program.commands.iter()
+                .filter(|command| command.button.as_deref() == Some(button) && command.method == "setVelocity")
+                .filter_map(|command| command.value)
+                .filter(|value| *value > 0.0)
+                .max_by(f32::total_cmp);
+            self.pollen_status = target.map(|value| format!("{} button selected outtake target: {:.0} ticks/s. Flywheel sequencing and prerequisites are not simulated yet.", button, value))
+                .unwrap_or_else(|| format!("{} button has no resolvable positive outtake setVelocity() command.", button));
         } else {
             self.pollen_status = format!(
                 "Detected button action: {action}. This command is not yet simulated."
@@ -573,7 +574,7 @@ impl eframe::App for VisualizerApp {
         let actions = self.detected_gamepad_actions();
         for button in newly_pressed {
             if let Some((_, action)) = actions.iter().find(|(mapped, _)| mapped == &button) {
-                self.run_gamepad_action(action);
+                self.run_gamepad_action(&button, action);
             }
         }
         self.update_simulation(ctx);
@@ -625,14 +626,6 @@ impl eframe::App for VisualizerApp {
             ui.heading("Pollen");
             ui.strong(format!("Carrying: {}/4", self.pollen_count));
             ui.label(&self.pollen_status);
-            ui.collapsing("Drive motor name mapping (match your code variables)", |ui| {
-                for (label, index) in [("Front left", 0), ("Front right", 1), ("Back left", 2), ("Back right", 3)] {
-                    ui.horizontal(|ui| {
-                        ui.label(label);
-                        ui.add(egui::TextEdit::singleline(&mut self.motor_names[index]).desired_width(130.0));
-                    });
-                }
-            });
             if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
                 let outtakes = find_outtake_commands(&mode.source);
                 if outtakes.is_empty() {
@@ -674,28 +667,30 @@ impl eframe::App for VisualizerApp {
                     ui.label("Button actions are checked while TeleOp is running.");
                 }
             });
-            ui.collapsing("Detected motor commands", |ui| {
+            ui.collapsing("FTC interpreter: detected hardware and commands", |ui| {
                 if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
-                    let discovered = find_defined_motors(&mode.source);
-                    let drive_motors = discovered.iter().filter(|(variable, hardware)| { let names = format!("{} {}", variable, hardware).to_ascii_lowercase(); ["frontleft", "frontright", "backleft", "backright", "leftfront", "rightfront", "leftback", "rightback"].iter().any(|part| names.contains(part)) }).collect::<Vec<_>>();
-                    if !drive_motors.is_empty() {
-                        ui.label("Automatically detected drive motors:");
-                        for (variable, hardware) in drive_motors { ui.label(format!("{} -> hardware {}", variable, hardware)); }
+                    let program = crate::ftc_interpreter::interpret(&mode.source);
+                    if program.motors.is_empty() {
+                        ui.label("No supported hardwareMap motor declarations found.");
                     }
-                    if discovered.is_empty() {
-                        ui.label("No hardwareMap motor definitions found in this OpMode.");
-                    } else {
-                        ui.label(format!("Found {} configured motor(s):", discovered.len()));
-                        for (variable, hardware_name) in &discovered {
-                            if let Some((kind, value)) = find_motor_command(&mode.source, variable) {
-                                ui.label(format!("{variable} → hardware \"{hardware_name}\": {kind}({value})"));
-                            } else {
-                                ui.label(format!("{variable} → hardware \"{hardware_name}\": defined, no setPower()/setVelocity() call found in this file"));
-                            }
-                        }
+                    for motor in &program.motors {
+                        let role = match motor.role {
+                            crate::ftc_interpreter::MotorRole::Drive(index) => ["Front left", "Front right", "Back left", "Back right"][index],
+                            crate::ftc_interpreter::MotorRole::Intake => "Intake",
+                            crate::ftc_interpreter::MotorRole::Feeder => "Feeder",
+                            crate::ftc_interpreter::MotorRole::Outtake => "Outtake",
+                            crate::ftc_interpreter::MotorRole::Other => "Other motor",
+                        };
+                        ui.label(format!("{} -> {} ({})", motor.variable, motor.hardware_name, role));
                     }
+                    ui.separator();
+                    for command in &program.commands {
+                        let button = command.button.as_deref().unwrap_or("always / no button block");
+                        ui.label(format!("{}: {}({}) [{}]", command.motor, command.method, command.expression, button));
+                    }
+                    for diagnostic in &program.diagnostics { ui.label(diagnostic); }
                 } else {
-                    ui.label("Import and select an OpMode to scan motor usage.");
+                    ui.label("Import and select an OpMode to interpret its FTC hardware and commands.");
                 }
             });
             ui.add_space(8.0);
