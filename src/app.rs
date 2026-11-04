@@ -192,13 +192,16 @@ impl VisualizerApp {
             let target = program.commands.iter()
                 .filter(|command| command.button.as_deref() == Some(button) && command.method == "setVelocity")
                 .filter_map(|command| command.value)
-                .filter(|value| *value > 0.0)
                 .max_by(f32::total_cmp);
             if let Some(value) = target {
-                self.flywheel_target_velocity = value;
-                self.pollen_status = format!("{} selected flywheel target: {:.0} ticks/s.", button, value);
+                self.flywheel_target_velocity = value.max(0.0);
+                self.pollen_status = if value <= 0.0 {
+                    format!("{} set the flywheel target to zero; the flywheel is coasting down.", button)
+                } else {
+                    format!("{} selected flywheel target: {:.0} ticks/s.", button, value)
+                };
             } else {
-                self.pollen_status = format!("{} button has no resolvable positive outtake setVelocity() command.", button);
+                self.pollen_status = format!("{} button has no resolvable outtake setVelocity() command.", button);
             }
         } else {
             self.pollen_status = format!(
@@ -269,14 +272,7 @@ impl VisualizerApp {
         if self.pollen_projectile.is_some() || self.shot_cooldown > 0.0 {
             return;
         }
-        let target = self.flywheel_target_velocity.max(
-            program.commands.iter()
-                .filter(|command| command.method == "setVelocity")
-                .filter_map(|command| command.value)
-                .filter(|value| *value > 0.0)
-                .max_by(f32::total_cmp)
-                .unwrap_or(0.0)
-        );
+        let target = self.flywheel_target_velocity;
         if target <= 0.0 {
             self.pollen_status = "No positive setVelocity() target was resolved from the selected OpMode.".to_owned();
             return;
@@ -296,7 +292,7 @@ impl VisualizerApp {
             elapsed: 0.0,
         });
         self.pollen_count -= 1;
-        let velocity_loss_fraction = (0.12 + (target / 3000.0) * 0.18).clamp(0.12, 0.35);
+        let velocity_loss_fraction = (0.30 + (target / 3000.0) * 0.20).clamp(0.30, 0.55);
         self.flywheel_velocity *= 1.0 - velocity_loss_fraction;
         self.shot_cooldown = 0.28;
         self.pollen_status = format!("Pollen fired at an estimated {:.1} in/s. Flywheel recovering.", speed);
@@ -413,7 +409,8 @@ impl VisualizerApp {
         } else if !self.intake_running {
             self.intake_cycle_timer = 0.0;
         }
-        self.flywheel_velocity = approach(self.flywheel_velocity, self.flywheel_target_velocity, 5000.0 * dt);
+        let flywheel_rate = if self.flywheel_target_velocity > self.flywheel_velocity { 1800.0 } else { 900.0 };
+        self.flywheel_velocity = approach(self.flywheel_velocity, self.flywheel_target_velocity, flywheel_rate * dt);
         self.shot_cooldown = (self.shot_cooldown - dt).max(0.0);
         if self.teleop_active && self.feeder_running && self.shot_cooldown <= 0.0 {
             self.shoot_pollen();
