@@ -187,7 +187,7 @@ impl VisualizerApp {
 
     fn detected_shooter_command(&self) -> Option<(String, String)> {
         let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i))?.source.as_str();
-        find_outtake_commands(source).into_iter().next().map(|(_, _, kind, value)| (kind, value))
+        find_outtake_commands(source).into_iter().find(|(_, _, kind, value)| kind == "setVelocity" && value.trim() != "0").map(|(_, _, kind, value)| (kind, value))
     }
 
     fn detected_shooter_power(&self) -> Option<f32> {
