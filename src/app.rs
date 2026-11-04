@@ -250,6 +250,9 @@ impl VisualizerApp {
         let dt = (now - self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
         self.update_pollen(dt);
+        if self.pollen_projectile.is_some() {
+            ctx.request_repaint();
+        }
 
         if self.teleop_active {
             self.poll_controller();
