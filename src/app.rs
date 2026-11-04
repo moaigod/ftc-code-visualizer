@@ -409,11 +409,12 @@ fn starting_field_pollen() -> Vec<Pollen> {
     // Each Flower has four overlapping pollen pieces. The progressively smaller
     // circles make the stack look like pollen being drawn into the intake.
     let flower_radii = [1.4_f32, 1.05, 0.75, 0.45];
+    let edge_offset = flower_radii[0];
     let flower_positions = [
-        (94.5, 0.0),                  // Bottom
-        (FIELD_SIZE_IN, 94.5),        // Right
-        (FIELD_SIZE_IN - 94.5, FIELD_SIZE_IN), // Top: mirrored across 144
-        (0.0, FIELD_SIZE_IN - 94.5),  // Left: mirrored across 144
+        (96.5, edge_offset), // Bottom: move inward by the largest pollen radius
+        (FIELD_SIZE_IN - edge_offset, 96.5), // Right
+        (FIELD_SIZE_IN - 96.5, FIELD_SIZE_IN - edge_offset), // Top, mirrored across 144
+        (edge_offset, FIELD_SIZE_IN - 96.5), // Left, mirrored across 144
     ];
     for (x, y) in flower_positions {
         for radius in flower_radii {
@@ -423,8 +424,8 @@ fn starting_field_pollen() -> Vec<Pollen> {
 
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
-        pollen.push(Pollen { x: offset, y: 0.0, radius: POLLEN_RADIUS_IN, from_flower: false });
-        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN, radius: POLLEN_RADIUS_IN, from_flower: false });
+        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false });
+        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false });
     }
 
     pollen
