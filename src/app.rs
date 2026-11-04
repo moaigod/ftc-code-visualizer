@@ -11,6 +11,12 @@ const MAX_POLLEN: u8 = 4;
 const POLLEN_RADIUS_IN: f32 = 1.4;
 const SHOT_FLIGHT_SECONDS: f32 = 0.72;
 const FLOWER_INTAKE_COOLDOWN_SECONDS: f32 = 0.5;
+const HIVE_STARTING_NECTAR: u8 = 3;
+const HIVE_ADDITIONAL_POLLEN_TO_TIP: u8 = 4;
+const HIVE_RED_CENTER: (f32, f32) = (62.6, 72.0);
+const HIVE_BLUE_CENTER: (f32, f32) = (81.4, 72.0);
+const HIVE_CELL_HALF_WIDTH_IN: f32 = 10.0;
+const HIVE_CELL_HALF_DEPTH_IN: f32 = 7.0;
 
 #[derive(Clone, Copy, Debug)]
 struct Pollen {
@@ -57,6 +63,10 @@ pub struct VisualizerApp {
     shot_cooldown: f32,
     intake_cycle_timer: f32,
     shot_sequence: u32,
+    red_hive_pollen: u8,
+    blue_hive_pollen: u8,
+    red_hive_tipped: bool,
+    blue_hive_tipped: bool,
 }
 
 impl Default for VisualizerApp {
@@ -90,6 +100,10 @@ impl Default for VisualizerApp {
             shot_cooldown: 0.0,
             intake_cycle_timer: 0.0,
             shot_sequence: 0,
+            red_hive_pollen: 0,
+            blue_hive_pollen: 0,
+            red_hive_tipped: false,
+            blue_hive_tipped: false,
         }
     }
 }
@@ -255,6 +269,14 @@ impl VisualizerApp {
 
         if let Some((index, _)) = nearest {
             let pollen = self.field_pollen[index];
+            let in_red_hive = (pollen.x - HIVE_RED_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
+                && (pollen.y - HIVE_RED_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
+            let in_blue_hive = (pollen.x - HIVE_BLUE_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
+                && (pollen.y - HIVE_BLUE_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
+            if (in_red_hive && !self.red_hive_tipped) || (in_blue_hive && !self.blue_hive_tipped) {
+                self.pollen_status = "Hive pollen is inaccessible until that hive tips.".to_owned();
+                return;
+            }
             if pollen.from_flower && self.flower_intake_cooldown > 0.0 {
                 self.pollen_status = format!("Flower intake cooling down: {:.1}s.", self.flower_intake_cooldown);
                 return;
@@ -456,6 +478,35 @@ impl VisualizerApp {
             projectile.elapsed += dt;
             projectile.x += projectile.vx * dt;
             projectile.y += projectile.vy * dt;
+
+            // The upward-facing cell starts with 3 NECTAR. Four launched
+            // POLLEN in that cell reaches the user-provided 3 + 4 tip threshold.
+            let in_red_cell = (projectile.x - HIVE_RED_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
+                && (projectile.y - HIVE_RED_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
+            let in_blue_cell = (projectile.x - HIVE_BLUE_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
+                && (projectile.y - HIVE_BLUE_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
+            if in_red_cell && !self.red_hive_tipped {
+                self.red_hive_pollen = self.red_hive_pollen.saturating_add(1);
+                self.pollen_projectile = None;
+                if self.red_hive_pollen >= HIVE_ADDITIONAL_POLLEN_TO_TIP {
+                    self.red_hive_tipped = true;
+                    self.pollen_status = format!("Red hive tipped! {} starting NECTAR + {} POLLEN.", HIVE_STARTING_NECTAR, self.red_hive_pollen);
+                } else {
+                    self.pollen_status = format!("Red hive: {}/{} POLLEN toward tip ({} starting NECTAR).", self.red_hive_pollen, HIVE_ADDITIONAL_POLLEN_TO_TIP, HIVE_STARTING_NECTAR);
+                }
+                return;
+            }
+            if in_blue_cell && !self.blue_hive_tipped {
+                self.blue_hive_pollen = self.blue_hive_pollen.saturating_add(1);
+                self.pollen_projectile = None;
+                if self.blue_hive_pollen >= HIVE_ADDITIONAL_POLLEN_TO_TIP {
+                    self.blue_hive_tipped = true;
+                    self.pollen_status = format!("Blue hive tipped! {} starting NECTAR + {} POLLEN.", HIVE_STARTING_NECTAR, self.blue_hive_pollen);
+                } else {
+                    self.pollen_status = format!("Blue hive: {}/{} POLLEN toward tip ({} starting NECTAR).", self.blue_hive_pollen, HIVE_ADDITIONAL_POLLEN_TO_TIP, HIVE_STARTING_NECTAR);
+                }
+                return;
+            }
 
             if projectile.elapsed >= SHOT_FLIGHT_SECONDS
                 || projectile.x < POLLEN_RADIUS_IN
