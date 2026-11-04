@@ -16,8 +16,8 @@ const HIVE_STARTING_NECTAR: u8 = 3;
 const HIVE_TIP_LOAD_UNITS: f32 = 8.0;
 const HIVE_NECTAR_LOAD_UNITS: f32 = 1.6;
 const HIVE_POLLEN_LOAD_UNITS: f32 = 1.0;
-const HIVE_RED_CENTER: (f32, f32) = (62.6, 72.0);
-const HIVE_BLUE_CENTER: (f32, f32) = (81.4, 72.0);
+const HIVE_RED_CENTER: (f32, f32) = (57.0, 57.0);
+const HIVE_BLUE_CENTER: (f32, f32) = (84.0, 84.0);
 const HIVE_CELL_HALF_WIDTH_IN: f32 = 10.0;
 const HIVE_CELL_HALF_DEPTH_IN: f32 = 7.0;
 
@@ -807,11 +807,33 @@ fn starting_field_pollen() -> Vec<Pollen> {
         pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, vx: 0.0, vy: 0.0 });
     }
 
-    // Five Nectar pieces in each alliance area (3.6-inch diameter).
+    // Three starting Nectar pieces inside each hive. The three positions
+    // form a compact cluster centered on the specified hive coordinates.
+    for (offset_x, offset_y) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
+        pollen.push(Pollen {
+            x: HIVE_RED_CENTER.0 + offset_x, y: HIVE_RED_CENTER.1 + offset_y,
+            radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar,
+            vx: 0.0, vy: 0.0,
+        });
+        pollen.push(Pollen {
+            x: HIVE_BLUE_CENTER.0 + offset_x, y: HIVE_BLUE_CENTER.1 + offset_y,
+            radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar,
+            vx: 0.0, vy: 0.0,
+        });
+    }
+
+    // Five additional Nectar pieces in each alliance area (3.6-inch diameter).
     for i in 0..5 {
-        let offset=i as f32*5.0;
-        pollen.push(Pollen{x:18.0+offset,y:18.0,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,vx:0.0,vy:0.0});
-        pollen.push(Pollen{x:FIELD_SIZE_IN-18.0-offset,y:FIELD_SIZE_IN-18.0,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,vx:0.0,vy:0.0});
+        let offset = i as f32 * 5.0;
+        pollen.push(Pollen {
+            x: 18.0 + offset, y: 18.0, radius: NECTAR_RADIUS_IN,
+            from_flower: false, kind: ElementKind::Nectar, vx: 0.0, vy: 0.0,
+        });
+        pollen.push(Pollen {
+            x: FIELD_SIZE_IN - 18.0 - offset, y: FIELD_SIZE_IN - 18.0,
+            radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar,
+            vx: 0.0, vy: 0.0,
+        });
     }
     pollen
 }
