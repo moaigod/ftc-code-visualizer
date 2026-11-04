@@ -8,3 +8,4 @@ license = "MIT"
 [dependencies]
 eframe = "0.31.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+rfd = "0.15"
