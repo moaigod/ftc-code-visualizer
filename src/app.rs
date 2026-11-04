@@ -1,6 +1,6 @@
 use std::time::Instant;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, TextureHandle, Vec2};
-use gilrs::{Axis, Gilrs};
+use gilrs::{Axis, Button, Gilrs};
 use crate::importer::{self, OpModeInfo};
 
 const FIELD_SIZE_IN: f32 = 144.0;
@@ -127,25 +127,34 @@ impl VisualizerApp {
         }
     }
 
-    fn poll_controller(&mut self) {
-        let Some(gilrs) = self.gamepad.as_mut() else { return; };
+    fn poll_controller(&mut self) -> Vec<String> {
+        let Some(gilrs) = self.gamepad.as_mut() else { return Vec::new(); };
         while gilrs.next_event().is_some() {}
         let connected = gilrs.gamepads().find(|(_, gamepad)| gamepad.is_connected());
-        if let Some((id, gamepad)) = connected {
+        if let Some((_, gamepad)) = connected {
             self.controller_status = format!("Connected: {}", gamepad.name());
             self.stick_strafe = deadzone(gamepad.value(Axis::LeftStickX));
             self.stick_forward = deadzone(gamepad.value(Axis::LeftStickY));
             self.stick_turn = deadzone(gamepad.value(Axis::RightStickX));
-            let _ = id;
+            let buttons = [
+                (Button::South, "a"), (Button::East, "b"),
+                (Button::West, "x"), (Button::North, "y"),
+                (Button::LeftTrigger, "left_bumper"), (Button::RightTrigger, "right_bumper"),
+                (Button::DPadUp, "dpad_up"), (Button::DPadDown, "dpad_down"),
+                (Button::DPadLeft, "dpad_left"), (Button::DPadRight, "dpad_right"),
+                (Button::Start, "start"), (Button::Select, "back"),
+            ];
+            buttons.iter().filter_map(|(button, name)|
+                gamepad.is_pressed(*button).then_some((*name).to_owned())
+            ).collect()
         } else {
             self.controller_status = "No controller detected. Connect an Xbox/compatible gamepad.".to_owned();
             self.stick_forward = 0.0;
             self.stick_strafe = 0.0;
             self.stick_turn = 0.0;
+            Vec::new()
         }
     }
-
-
 
     fn detected_shooter_command(&self) -> Option<(String, String)> {
         let name = self.motor_names[4].trim();
@@ -436,6 +445,47 @@ impl VisualizerApp {
 
 // Find FTC motor variables initialized through hardwareMap.get(...).
 // Supports common Java and Kotlin one-line declarations/assignments.
+fn find_gamepad_actions(source: &str) -> Vec<(String, String)> {
+    let mut results = Vec::new();
+    let lines = source.lines().collect::<Vec<_>>();
+    let buttons = ["a", "b", "x", "y", "left_bumper", "right_bumper",
+        "dpad_up", "dpad_down", "dpad_left", "dpad_right", "start", "back"];
+
+    for (line_index, line) in lines.iter().enumerate() {
+        let lower = line.to_ascii_lowercase();
+        if !lower.contains("if") || !lower.contains("gamepad1.") { continue; }
+        let Some(button) = buttons.iter().find(|button| lower.contains(&format!("gamepad1.{button}"))) else { continue; };
+
+        let mut block = String::new();
+        let mut depth = 0_i32;
+        let mut started = false;
+        for body_line in lines.iter().skip(line_index) {
+            block.push_str(body_line);
+            block.push('\n');
+            for ch in body_line.chars() {
+                if ch == '{' { depth += 1; started = true; }
+                if ch == '}' { depth -= 1; }
+            }
+            if started && depth <= 0 { break; }
+            if !started && body_line.contains(';') { break; }
+        }
+
+        let lower_block = block.to_ascii_lowercase();
+        let action = if lower_block.contains("intake") {
+            "intake".to_owned()
+        } else if lower_block.contains("outtake") || lower_block.contains("shooter") {
+            "outtake/shooter".to_owned()
+        } else {
+            "other OpMode command".to_owned()
+        };
+        let name = (*button).to_owned();
+        if !results.iter().any(|(existing, _)| existing == &name) {
+            results.push((name, action));
+        }
+    }
+    results
+}
+
 fn find_defined_motors(source: &str) -> Vec<(String, String)> {
     let mut motors = Vec::new();
     for line in source.lines() {
@@ -555,10 +605,18 @@ fn approach(current: f32, target: f32, max_delta: f32) -> f32 {
 impl eframe::App for VisualizerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.load_field_image(ctx);
-        let intake_pressed = ctx.input(|input| input.key_pressed(egui::Key::E));
-        let shoot_pressed = ctx.input(|input| input.key_pressed(egui::Key::Space));
-        if intake_pressed { self.intake_pollen(); }
-        if shoot_pressed { self.shoot_pollen(); }
+        let keyboard_intake = ctx.input(|input| input.key_pressed(egui::Key::E));
+        let keyboard_shoot = ctx.input(|input| input.key_pressed(egui::Key::Space));
+        if keyboard_intake { self.intake_pollen(); }
+        if keyboard_shoot { self.shoot_pollen(); }
+
+        let pressed_buttons = if self.teleop_active { self.poll_controller() } else { Vec::new() };
+        let actions = self.detected_gamepad_actions();
+        for button in pressed_buttons {
+            if let Some((_, action)) = actions.iter().find(|(mapped, _)| mapped == &button) {
+                self.run_gamepad_action(action);
+            }
+        }
         self.update_simulation(ctx);
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -631,6 +689,17 @@ impl eframe::App for VisualizerApp {
                 }
             });
             ui.label("Move the front intake close to a yellow pollen ball, then intake.");
+            ui.collapsing("Detected gamepad button actions", |ui| {
+                let actions = self.detected_gamepad_actions();
+                if actions.is_empty() {
+                    ui.label("No gamepad1 button if-blocks detected in the selected OpMode.");
+                } else {
+                    for (button, action) in actions {
+                        ui.label(format!("gamepad1.{button} → {action}"));
+                    }
+                    ui.label("Button actions are checked while TeleOp is running.");
+                }
+            });
             ui.collapsing("Detected motor commands", |ui| {
                 if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
                     let discovered = find_defined_motors(&mode.source);
