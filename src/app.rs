@@ -218,21 +218,6 @@ impl VisualizerApp {
             return;
         }
         self.pollen_status = format!("Detected setVelocity({command_value:.1}) from code, but converting encoder velocity to field inches/second requires motor, gearing, and wheel calibration.");
-        return;
-        #[allow(unreachable_code)]
-        let heading = self.heading_deg.to_radians();
-        let speed = 0.0_f32;
-        let start_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 1.0);
-        let start_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 1.0);
-        self.pollen_projectile = Some(PollenProjectile {
-            x: start_x,
-            y: start_y,
-            vx: heading.sin() * speed,
-            vy: heading.cos() * speed,
-            elapsed: 0.0,
-        });
-        self.pollen_count -= 1;
-        self.pollen_status = format!("Pollen launched: {}/4 onboard.", self.pollen_count);
     }
 
     fn update_pollen(&mut self, dt: f32) {
