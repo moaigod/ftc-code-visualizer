@@ -393,7 +393,7 @@ impl VisualizerApp {
             );
             let radius = pollen.radius * scale;
             painter.circle_filled(position, radius, Color32::from_rgb(255, 218, 35));
-            painter.circle_stroke(position, radius, Stroke::new(1.0, Color32::from_rgb(120, 92, 0)));
+            painter.circle_stroke(position, radius, Stroke::new(1.0_f32, Color32::from_rgb(120, 92, 0)));
         }
 
         if let Some(projectile) = self.pollen_projectile {
@@ -404,7 +404,7 @@ impl VisualizerApp {
                 field.bottom() - projectile.y * scale - arc_height * scale,
             );
             painter.circle_filled(position, POLLEN_RADIUS_IN * scale, Color32::from_rgb(255, 235, 90));
-            painter.circle_stroke(position, POLLEN_RADIUS_IN * scale, Stroke::new(1.2, Color32::WHITE));
+            painter.circle_stroke(position, POLLEN_RADIUS_IN * scale, Stroke::new(1.2_f32, Color32::WHITE));
         }
 
         let center = Pos2::new(field.left() + self.robot_x * scale, field.bottom() - self.robot_y * scale);
