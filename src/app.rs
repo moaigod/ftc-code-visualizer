@@ -16,8 +16,10 @@ const HIVE_STARTING_NECTAR: u8 = 3;
 const HIVE_TIP_LOAD_UNITS: f32 = 8.0;
 const HIVE_NECTAR_LOAD_UNITS: f32 = 1.6;
 const HIVE_POLLEN_LOAD_UNITS: f32 = 1.0;
-const HIVE_RED_CENTER: (f32, f32) = (57.0, 57.0);
-const HIVE_BLUE_CENTER: (f32, f32) = (84.0, 84.0);
+const RED_HIVE_A: (f32, f32) = (57.0, 57.0); // Starts untipped
+const RED_HIVE_B: (f32, f32) = (57.0, 81.0); // Starts tipped
+const BLUE_HIVE_A: (f32, f32) = (84.0, 84.0); // Starts untipped
+const BLUE_HIVE_B: (f32, f32) = (81.0, 57.0); // Starts tipped
 const HIVE_CELL_HALF_WIDTH_IN: f32 = 11.0;
 const HIVE_CELL_HALF_DEPTH_IN: f32 = 7.0;
 
@@ -287,8 +289,11 @@ impl VisualizerApp {
         }).min_by(|a,b| a.1.total_cmp(&b.1));
         if let Some((i,_))=nearest {
             let e=self.field_pollen[i];
-            if matches!(e.hive, Some(HiveSide::Red)) && !self.red_hive_tipped
-                || matches!(e.hive, Some(HiveSide::Blue)) && !self.blue_hive_tipped {
+            let blocked_by_red = e.hive == Some(HiveSide::Red)
+                && point_in_hive_cell((e.x, e.y), hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0);
+            let blocked_by_blue = e.hive == Some(HiveSide::Blue)
+                && point_in_hive_cell((e.x, e.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0);
+            if blocked_by_red || blocked_by_blue {
                 self.pollen_status="Hive elements are inaccessible until that hive tips.".to_owned(); return;
             }
             if e.from_flower && self.flower_intake_cooldown>0.0 {
@@ -355,8 +360,10 @@ impl VisualizerApp {
             // Nectar staged inside an untipped hive is behind the hive's
             // scoring-only barrier; the robot chassis must pass through it.
             let inside_untipped_hive =
-                matches!(pollen.hive, Some(HiveSide::Red)) && !self.red_hive_tipped
-                || matches!(pollen.hive, Some(HiveSide::Blue)) && !self.blue_hive_tipped;
+                pollen.hive == Some(HiveSide::Red)
+                    && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0)
+                || pollen.hive == Some(HiveSide::Blue)
+                    && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0);
             if inside_untipped_hive { continue; }
 
             let dx = pollen.x - self.robot_x;
@@ -389,8 +396,12 @@ impl VisualizerApp {
             // Invisible hive perimeter walls affect scoring elements only.
             // They keep the starting Nectar inside each untipped hive while
             // still allowing the robot to drive across the same area.
-            collide_element_with_hive(pollen, HIVE_RED_CENTER, HiveSide::Red, self.red_hive_tipped);
-            collide_element_with_hive(pollen, HIVE_BLUE_CENTER, HiveSide::Blue, self.blue_hive_tipped);
+            let (red_untipped, red_tipped) = hive_pair_centers(HiveSide::Red, self.red_hive_tipped);
+            let (blue_untipped, blue_tipped) = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped);
+            collide_element_with_hive(pollen, red_untipped, HiveSide::Red, false);
+            collide_element_with_hive(pollen, red_tipped, HiveSide::Red, true);
+            collide_element_with_hive(pollen, blue_untipped, HiveSide::Blue, false);
+            collide_element_with_hive(pollen, blue_tipped, HiveSide::Blue, true);
         }
 
         // Resolve overlaps between loose pollen pieces with a soft, damped bounce.
@@ -482,53 +493,42 @@ impl VisualizerApp {
             // 5 Nectar alone or 8 Pollen alone also reaches the threshold.
             // Test the entire movement segment, not only its endpoint, so a
             // fast projectile cannot skip over a hive between simulation frames.
-            let in_red_cell = segment_intersects_rect(
-                (previous_x, previous_y), (projectile.x, projectile.y),
-                HIVE_RED_CENTER, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN,
-            );
-            let in_blue_cell = segment_intersects_rect(
-                (previous_x, previous_y), (projectile.x, projectile.y),
-                HIVE_BLUE_CENTER, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN,
-            );
-            if in_red_cell {
-                match projectile.kind {
-                    ElementKind::Pollen => self.red_hive_pollen = self.red_hive_pollen.saturating_add(1),
-                    ElementKind::Nectar => self.red_hive_extra_nectar = self.red_hive_extra_nectar.saturating_add(1),
-                }
-                self.pollen_projectile = None;
-                let load = HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
-                    + self.red_hive_extra_nectar as f32 * HIVE_NECTAR_LOAD_UNITS
-                    + self.red_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS;
-                let next_tip = HIVE_TIP_LOAD_UNITS * (self.red_hive_tip_count + 1) as f32;
-                if load >= next_tip {
-                    self.red_hive_tipped = true;
-                    self.red_hive_tip_count += 1;
-                    self.pollen_status = format!("Red hive tipped again! Tip {} · {:.1} load units.", self.red_hive_tip_count, load);
+            let red_untipped = hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0;
+            let blue_untipped = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0;
+            let in_red_cell = segment_intersects_rect((previous_x, previous_y), (projectile.x, projectile.y), red_untipped, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN);
+            let in_blue_cell = segment_intersects_rect((previous_x, previous_y), (projectile.x, projectile.y), blue_untipped, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN);
+            if in_red_cell || in_blue_cell {
+                let (side, center) = if in_red_cell {(HiveSide::Red,red_untipped)} else {(HiveSide::Blue,blue_untipped)};
+                let (pollen_count, nectar_count, tipped, tip_count) = match side {
+                    HiveSide::Red => {
+                        match projectile.kind { ElementKind::Pollen => self.red_hive_pollen=self.red_hive_pollen.saturating_add(1), ElementKind::Nectar => self.red_hive_extra_nectar=self.red_hive_extra_nectar.saturating_add(1) }
+                        (self.red_hive_pollen,self.red_hive_extra_nectar,&mut self.red_hive_tipped,&mut self.red_hive_tip_count)
+                    }
+                    HiveSide::Blue => {
+                        match projectile.kind { ElementKind::Pollen => self.blue_hive_pollen=self.blue_hive_pollen.saturating_add(1), ElementKind::Nectar => self.blue_hive_extra_nectar=self.blue_hive_extra_nectar.saturating_add(1) }
+                        (self.blue_hive_pollen,self.blue_hive_extra_nectar,&mut self.blue_hive_tipped,&mut self.blue_hive_tip_count)
+                    }
+                };
+                let load=HIVE_STARTING_NECTAR as f32*HIVE_NECTAR_LOAD_UNITS+nectar_count as f32*HIVE_NECTAR_LOAD_UNITS+pollen_count as f32*HIVE_POLLEN_LOAD_UNITS;
+                self.pollen_projectile=None;
+                if load>=HIVE_TIP_LOAD_UNITS {
+                    *tipped=!*tipped;
+                    *tip_count+=1;
+                    for i in 0..pollen_count {
+                        let angle=i as f32*2.399_963;
+                        self.field_pollen.push(Pollen{x:center.0+angle.cos()*3.0,y:center.1+angle.sin()*3.0,radius:POLLEN_RADIUS_IN,from_flower:false,kind:ElementKind::Pollen,hive:None,vx:angle.cos()*1.5,vy:angle.sin()*1.5});
+                    }
+                    for i in 0..nectar_count {
+                        let angle=i as f32*2.399_963+0.8;
+                        self.field_pollen.push(Pollen{x:center.0+angle.cos()*4.0,y:center.1+angle.sin()*4.0,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,hive:None,vx:angle.cos()*1.2,vy:angle.sin()*1.2});
+                    }
+                    match side {HiveSide::Red=>{self.red_hive_pollen=0;self.red_hive_extra_nectar=0;},HiveSide::Blue=>{self.blue_hive_pollen=0;self.blue_hive_extra_nectar=0;}}
+                    self.pollen_status=format!("{} hive tipped. Its opposite fixed cell is now untipped.",if side==HiveSide::Red{"Red"}else{"Blue"});
                 } else {
-                    self.pollen_status = format!("Red hive: {:.1}/{:.1} load units toward tip {}.", load, next_tip, self.red_hive_tip_count + 1);
+                    self.pollen_status=format!("{} hive: {:.1}/8.0 load units toward tipping.",if side==HiveSide::Red{"Red"}else{"Blue"},load);
                 }
                 return;
             }
-            if in_blue_cell {
-                match projectile.kind {
-                    ElementKind::Pollen => self.blue_hive_pollen = self.blue_hive_pollen.saturating_add(1),
-                    ElementKind::Nectar => self.blue_hive_extra_nectar = self.blue_hive_extra_nectar.saturating_add(1),
-                }
-                self.pollen_projectile = None;
-                let load = HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
-                    + self.blue_hive_extra_nectar as f32 * HIVE_NECTAR_LOAD_UNITS
-                    + self.blue_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS;
-                let next_tip = HIVE_TIP_LOAD_UNITS * (self.blue_hive_tip_count + 1) as f32;
-                if load >= next_tip {
-                    self.blue_hive_tipped = true;
-                    self.blue_hive_tip_count += 1;
-                    self.pollen_status = format!("Blue hive tipped again! Tip {} · {:.1} load units.", self.blue_hive_tip_count, load);
-                } else {
-                    self.pollen_status = format!("Blue hive: {:.1}/{:.1} load units toward tip {}.", load, next_tip, self.blue_hive_tip_count + 1);
-                }
-                return;
-            }
-
             if projectile.elapsed >= SHOT_FLIGHT_SECONDS
                 || projectile.x < POLLEN_RADIUS_IN
                 || projectile.x > FIELD_SIZE_IN - POLLEN_RADIUS_IN
@@ -865,6 +865,15 @@ fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> 
     }).collect()
 }
 
+fn hive_pair_centers(side: HiveSide, first_cell_tipped: bool) -> ((f32,f32),(f32,f32)) {
+    let (a,b)=match side {HiveSide::Red=>(RED_HIVE_A,RED_HIVE_B),HiveSide::Blue=>(BLUE_HIVE_A,BLUE_HIVE_B)};
+    if first_cell_tipped {(b,a)} else {(a,b)}
+}
+
+fn point_in_hive_cell(point:(f32,f32),center:(f32,f32))->bool {
+    (point.0-center.0).abs()<=HIVE_CELL_HALF_WIDTH_IN && (point.1-center.1).abs()<=HIVE_CELL_HALF_DEPTH_IN
+}
+
 fn segment_intersects_rect(
     start: (f32, f32),
     end: (f32, f32),
@@ -987,19 +996,11 @@ fn starting_field_pollen() -> Vec<Pollen> {
         pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
     }
 
-    // Three starting Nectar pieces inside each hive. The three positions
-    // form a compact cluster centered on the specified hive coordinates.
+    // Both fixed cells in each alliance pair start with three Nectar.
     for (offset_x, offset_y) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
-        pollen.push(Pollen {
-            x: HIVE_RED_CENTER.0 + offset_x, y: HIVE_RED_CENTER.1 + offset_y,
-            radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar,
-            hive: Some(HiveSide::Red), vx: 0.0, vy: 0.0,
-        });
-        pollen.push(Pollen {
-            x: HIVE_BLUE_CENTER.0 + offset_x, y: HIVE_BLUE_CENTER.1 + offset_y,
-            radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar,
-            hive: Some(HiveSide::Blue), vx: 0.0, vy: 0.0,
-        });
+        for (center, side) in [(RED_HIVE_A,HiveSide::Red),(RED_HIVE_B,HiveSide::Red),(BLUE_HIVE_A,HiveSide::Blue),(BLUE_HIVE_B,HiveSide::Blue)] {
+            pollen.push(Pollen{x:center.0+offset_x,y:center.1+offset_y,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,hive:Some(side),vx:0.0,vy:0.0});
+        }
     }
 
     // Nectar is staged only inside the two hives; no extra pieces spawn in the alliance areas.
