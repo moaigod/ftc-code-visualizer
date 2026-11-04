@@ -507,8 +507,12 @@ impl VisualizerApp {
             // fast projectile cannot skip over a hive between simulation frames.
             let red_untipped = hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0;
             let blue_untipped = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0;
-            let in_red_cell = segment_intersects_hive_cell((previous_x, previous_y), (projectile.x, projectile.y), red_untipped);
-            let in_blue_cell = segment_intersects_hive_cell((previous_x, previous_y), (projectile.x, projectile.y), blue_untipped);
+            let in_red_cell = segment_enters_hive_from_alliance_side(
+                (previous_x, previous_y), (projectile.x, projectile.y), red_untipped, HiveSide::Red,
+            );
+            let in_blue_cell = segment_enters_hive_from_alliance_side(
+                (previous_x, previous_y), (projectile.x, projectile.y), blue_untipped, HiveSide::Blue,
+            );
             // Nectar retains its originating alliance. It cannot score in the
             // opposing alliance's cell, and its color/ownership is never rewritten.
             let valid_red_score = in_red_cell && projectile.hive != Some(HiveSide::Blue);
@@ -958,6 +962,28 @@ fn point_in_hive_cell(point: (f32, f32), center: (f32, f32)) -> bool {
 fn segment_intersects_hive_cell(start: (f32, f32), end: (f32, f32), center: (f32, f32)) -> bool {
     let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
     segment_intersects_bounds(start, end, min_x, max_x, min_y, max_y)
+}
+
+fn segment_enters_hive_from_alliance_side(
+    start: (f32, f32),
+    end: (f32, f32),
+    center: (f32, f32),
+    side: HiveSide,
+) -> bool {
+    let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
+    let dx = end.0 - start.0;
+
+    // Red scores by entering from the left; Blue scores by entering from
+    // the right. Merely crossing the cell from its back side is not a score.
+    let entry_x = match side {
+        HiveSide::Red if dx > 0.0 && start.0 < min_x && end.0 >= min_x => min_x,
+        HiveSide::Blue if dx < 0.0 && start.0 > max_x && end.0 <= max_x => max_x,
+        _ => return false,
+    };
+
+    let t = (entry_x - start.0) / dx;
+    let entry_y = start.1 + (end.1 - start.1) * t;
+    entry_y >= min_y && entry_y <= max_y
 }
 
 fn segment_intersects_bounds(
