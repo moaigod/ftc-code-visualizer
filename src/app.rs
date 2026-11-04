@@ -16,10 +16,10 @@ const HIVE_STARTING_NECTAR: u8 = 3;
 const HIVE_TIP_LOAD_UNITS: f32 = 8.0;
 const HIVE_NECTAR_LOAD_UNITS: f32 = 1.6;
 const HIVE_POLLEN_LOAD_UNITS: f32 = 1.0;
-const RED_HIVE_A: (f32, f32) = (57.0, 57.0); // Starts untipped
-const RED_HIVE_B: (f32, f32) = (57.0, 81.0); // Starts tipped
-const BLUE_HIVE_A: (f32, f32) = (81.0, 81.0); // Starts untipped
-const BLUE_HIVE_B: (f32, f32) = (81.0, 57.0); // Starts tipped
+const RED_HIVE_A: (f32, f32) = (57.0, 59.0); // Starts untipped
+const RED_HIVE_B: (f32, f32) = (57.0, 85.0); // Starts tipped
+const BLUE_HIVE_A: (f32, f32) = (86.0, 85.0); // Starts untipped
+const BLUE_HIVE_B: (f32, f32) = (86.0, 57.0); // Starts tipped
 const HIVE_CELL_HALF_WIDTH_IN: f32 = 11.0;
 const HIVE_CELL_HALF_DEPTH_IN: f32 = 7.0;
 
@@ -501,10 +501,14 @@ impl VisualizerApp {
             // fast projectile cannot skip over a hive between simulation frames.
             let red_untipped = hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0;
             let blue_untipped = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0;
-            let in_red_cell = segment_intersects_rect((previous_x, previous_y), (projectile.x, projectile.y), red_untipped, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN);
-            let in_blue_cell = segment_intersects_rect((previous_x, previous_y), (projectile.x, projectile.y), blue_untipped, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN);
-            if in_red_cell || in_blue_cell {
-                let (side, center) = if in_red_cell {(HiveSide::Red,red_untipped)} else {(HiveSide::Blue,blue_untipped)};
+            let in_red_cell = segment_intersects_hive_cell((previous_x, previous_y), (projectile.x, projectile.y), red_untipped);
+            let in_blue_cell = segment_intersects_hive_cell((previous_x, previous_y), (projectile.x, projectile.y), blue_untipped);
+            // Nectar retains its originating alliance. It cannot score in the
+            // opposing alliance's cell, and its color/ownership is never rewritten.
+            let valid_red_score = in_red_cell && projectile.hive != Some(HiveSide::Blue);
+            let valid_blue_score = in_blue_cell && projectile.hive != Some(HiveSide::Red);
+            if valid_red_score || valid_blue_score {
+                let (side, center) = if valid_red_score {(HiveSide::Red,red_untipped)} else {(HiveSide::Blue,blue_untipped)};
                 let (pollen_count, nectar_count) = match side {
                     HiveSide::Red => {
                         match projectile.kind { ElementKind::Pollen => self.red_hive_pollen=self.red_hive_pollen.saturating_add(1), ElementKind::Nectar => self.red_hive_extra_nectar=self.red_hive_extra_nectar.saturating_add(1) }
@@ -528,7 +532,7 @@ impl VisualizerApp {
                     radius: scored_radius,
                     from_flower: false,
                     kind: projectile.kind,
-                    hive: Some(side),
+                    hive: projectile.hive,
                     vx: 0.0,
                     vy: 0.0,
                 });
@@ -756,13 +760,14 @@ impl VisualizerApp {
             (hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0, Color32::from_rgb(65, 145, 255), "BLUE SCORE ZONE"),
         ];
         for (zone_center, color, label) in score_zones {
+            let (min_x, max_x, min_y, max_y) = hive_cell_bounds(zone_center);
             let min = Pos2::new(
-                field.left() + (zone_center.0 - HIVE_CELL_HALF_WIDTH_IN) * scale,
-                field.bottom() - (zone_center.1 + HIVE_CELL_HALF_DEPTH_IN) * scale,
+                field.left() + min_x * scale,
+                field.bottom() - max_y * scale,
             );
             let max = Pos2::new(
-                field.left() + (zone_center.0 + HIVE_CELL_HALF_WIDTH_IN) * scale,
-                field.bottom() - (zone_center.1 - HIVE_CELL_HALF_DEPTH_IN) * scale,
+                field.left() + max_x * scale,
+                field.bottom() - min_y * scale,
             );
             let zone_rect = Rect::from_min_max(min, max);
             painter.rect_filled(zone_rect, 0.0, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 35));
@@ -912,22 +917,40 @@ fn hive_pair_centers(side: HiveSide, first_cell_tipped: bool) -> ((f32,f32),(f32
     if first_cell_tipped {(b,a)} else {(a,b)}
 }
 
-fn point_in_hive_cell(point:(f32,f32),center:(f32,f32))->bool {
-    (point.0-center.0).abs()<=HIVE_CELL_HALF_WIDTH_IN && (point.1-center.1).abs()<=HIVE_CELL_HALF_DEPTH_IN
+fn hive_cell_bounds(center: (f32, f32)) -> (f32, f32, f32, f32) {
+    let min_x = center.0 - HIVE_CELL_HALF_WIDTH_IN;
+    let max_x = center.0 + HIVE_CELL_HALF_WIDTH_IN;
+    let mut min_y = center.1 - HIVE_CELL_HALF_DEPTH_IN;
+    let mut max_y = center.1 + HIVE_CELL_HALF_DEPTH_IN;
+
+    // The four field-specific scoring rectangles have one shortened Y edge.
+    if center == RED_HIVE_A || center == BLUE_HIVE_B {
+        min_y += 1.0; // Bottom edge inset by one inch.
+    } else if center == RED_HIVE_B || center == BLUE_HIVE_A {
+        max_y -= 1.0; // Top edge inset by one inch.
+    }
+    (min_x, max_x, min_y, max_y)
 }
 
-fn segment_intersects_rect(
+fn point_in_hive_cell(point: (f32, f32), center: (f32, f32)) -> bool {
+    let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
+    point.0 >= min_x && point.0 <= max_x && point.1 >= min_y && point.1 <= max_y
+}
+
+fn segment_intersects_hive_cell(start: (f32, f32), end: (f32, f32), center: (f32, f32)) -> bool {
+    let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
+    segment_intersects_bounds(start, end, min_x, max_x, min_y, max_y)
+}
+
+fn segment_intersects_bounds(
     start: (f32, f32),
     end: (f32, f32),
-    center: (f32, f32),
-    half_width: f32,
-    half_depth: f32,
+    min_x: f32,
+    max_x: f32,
+    min_y: f32,
+    max_y: f32,
 ) -> bool {
     // Liang-Barsky segment clipping against an axis-aligned hive cell.
-    let min_x = center.0 - half_width;
-    let max_x = center.0 + half_width;
-    let min_y = center.1 - half_depth;
-    let max_y = center.1 + half_depth;
     let dx = end.0 - start.0;
     let dy = end.1 - start.1;
     let mut t_min: f32 = 0.0;
@@ -953,10 +976,7 @@ fn segment_intersects_rect(
 fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: HiveSide, tipped: bool) {
     if tipped { return; }
 
-    let min_x = center.0 - HIVE_CELL_HALF_WIDTH_IN;
-    let max_x = center.0 + HIVE_CELL_HALF_WIDTH_IN;
-    let min_y = center.1 - HIVE_CELL_HALF_DEPTH_IN;
-    let max_y = center.1 + HIVE_CELL_HALF_DEPTH_IN;
+    let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
 
     if element.hive == Some(side) && point_in_hive_cell((element.x, element.y), center) {
         // Preloaded Nectar stays inside its own fixed cell until that cell tips.
@@ -1038,7 +1058,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
     }
 
     // At match start, only the initially untipped cells contain their
-    // three starting Nectar: Red at (57,57), Blue at (81,81).
+    // three starting Nectar: Red at (57,59), Blue at (86,85).
     for (offset_x, offset_y) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
         for (center, side) in [(RED_HIVE_A,HiveSide::Red),(BLUE_HIVE_A,HiveSide::Blue)] {
             pollen.push(Pollen{x:center.0+offset_x,y:center.1+offset_y,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,hive:Some(side),vx:0.0,vy:0.0});
