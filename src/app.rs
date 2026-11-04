@@ -434,6 +434,35 @@ impl VisualizerApp {
 
 
 
+// Find FTC motor variables initialized through hardwareMap.get(...).
+// Supports common Java and Kotlin one-line declarations/assignments.
+fn find_defined_motors(source: &str) -> Vec<(String, String)> {
+    let mut motors = Vec::new();
+    for line in source.lines() {
+        let Some(get_position) = line.find("hardwareMap.get(") else { continue; };
+        let before_get = &line[..get_position];
+        let Some((left, _)) = before_get.split_once('=') else { continue; };
+        let variable = left
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter(|part| !part.is_empty())
+            .last()
+            .unwrap_or("");
+        if variable.is_empty() { continue; }
+
+        let after_get = &line[get_position + "hardwareMap.get(".len()..];
+        let Some(first_quote) = after_get.find('"') else { continue; };
+        let after_quote = &after_get[first_quote + 1..];
+        let Some(end_quote) = after_quote.find('"') else { continue; };
+        let hardware_name = after_quote[..end_quote].trim();
+        if hardware_name.is_empty() { continue; }
+
+        if !motors.iter().any(|(existing, _)| existing == variable) {
+            motors.push((variable.to_owned(), hardware_name.to_owned()));
+        }
+    }
+    motors
+}
+
 fn find_motor_command(source: &str, motor_name: &str) -> Option<(String, String)> {
     for method in ["setVelocity", "setPower"] {
         let pattern = format!("{motor_name}.{method}");
@@ -604,6 +633,21 @@ impl eframe::App for VisualizerApp {
             ui.label("Move the front intake close to a yellow pollen ball, then intake.");
             ui.collapsing("Detected motor commands", |ui| {
                 if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
+                    let discovered = find_defined_motors(&mode.source);
+                    if discovered.is_empty() {
+                        ui.label("No hardwareMap motor definitions found in this OpMode.");
+                    } else {
+                        ui.label(format!("Found {} configured motor(s):", discovered.len()));
+                        for (variable, hardware_name) in &discovered {
+                            if let Some((kind, value)) = find_motor_command(&mode.source, variable) {
+                                ui.label(format!("{variable} → hardware \"{hardware_name}\": {kind}({value})"));
+                            } else {
+                                ui.label(format!("{variable} → hardware \"{hardware_name}\": defined, no setPower()/setVelocity() call found in this file"));
+                            }
+                        }
+                    }
+                    ui.separator();
+                    ui.label("Manual name mappings:");
                     for (label, index) in [("Front left", 0), ("Front right", 1), ("Back left", 2), ("Back right", 3), ("Shooter", 4)] {
                         let name = self.motor_names[index].trim();
                         if name.is_empty() { continue; }
