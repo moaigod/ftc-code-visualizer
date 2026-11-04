@@ -282,7 +282,7 @@ impl VisualizerApp {
             let dx=e.x-self.robot_x; let dy=e.y-self.robot_y;
             // Inverse of the field transform used to draw the robot:
             // local +Y points toward the front of the chassis.
-            let lx=dx*h.cos()+dy*h.sin(); let ly=dx*h.sin()-dy*h.cos();
+            let lx=dx*h.cos()+dy*h.sin();
             // Slightly wider/deeper trigger zone than the rendered intake bar:
             // any scoring element physically touching the front intake is eligible.
             // World +Y is up-field, matching the robot drawing transform.
@@ -781,7 +781,7 @@ impl VisualizerApp {
             );
             let zone_rect = Rect::from_min_max(min, max);
             painter.rect_filled(zone_rect, 0.0, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 35));
-            painter.rect_stroke(zone_rect, 0.0, Stroke::new(2.0, color), egui::StrokeKind::Inside);
+            painter.rect_stroke(zone_rect, 0.0, Stroke::new(2.0_f32, color), egui::StrokeKind::Inside);
             painter.text(
                 Pos2::new(zone_rect.center().x, zone_rect.top() + 9.0),
                 Align2::CENTER_TOP,
@@ -1064,7 +1064,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
         pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, scored: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
-        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
+        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, scored: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
     }
 
     // At match start, only the initially untipped cells contain their
