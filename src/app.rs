@@ -581,6 +581,8 @@ impl VisualizerApp {
             deck.to_vec(), Color32::from_rgb(65, 88, 105),
             Stroke::new(1.0, Color32::from_rgb(130, 165, 185)),
         ));
+        // Center-mounted blue ball / mechanism marker.
+        painter.circle_filled(center, 2.0 * scale, Color32::from_rgb(80, 145, 220));
 
         // Front intake bar makes the robot's forward direction immediately visible.
         let intake = [
@@ -591,10 +593,6 @@ impl VisualizerApp {
             intake.to_vec(), Color32::from_rgb(240, 177, 54),
             Stroke::new(1.0, Color32::WHITE),
         ));
-        // Keep the intake hardware visually distinct from loose yellow pollen.
-        let nose = transform(0.0, 10.8);
-        painter.circle_filled(nose, (1.2 * scale).max(1.8), Color32::from_rgb(65, 205, 190));
-        painter.circle_stroke(nose, (1.2 * scale).max(1.8), Stroke::new(0.8, Color32::WHITE));
         painter.text(rect.left_top() + Vec2::new(7.0, 7.0), Align2::LEFT_TOP,
             "BIOBUZZ FIELD", FontId::proportional(12.0), Color32::LIGHT_GRAY);
         painter.text(rect.right_bottom() - Vec2::new(7.0, 7.0), Align2::RIGHT_BOTTOM,
