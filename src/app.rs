@@ -52,6 +52,8 @@ pub struct VisualizerApp {
     feeder_running: bool,
     flywheel_velocity: f32,
     flywheel_target_velocity: f32,
+    shooter_velocity_scale: f32,
+    shot_cooldown: f32,
 }
 
 impl Default for VisualizerApp {
@@ -81,6 +83,8 @@ impl Default for VisualizerApp {
             feeder_running: false,
             flywheel_velocity: 0.0,
             flywheel_target_velocity: 0.0,
+            shooter_velocity_scale: 0.02,
+            shot_cooldown: 0.0,
         }
     }
 }
@@ -250,43 +254,50 @@ impl VisualizerApp {
         let has_intake = program.motors.iter().any(|m| matches!(&m.role, crate::ftc_interpreter::MotorRole::Intake));
         let has_feeder = program.motors.iter().any(|m| matches!(&m.role, crate::ftc_interpreter::MotorRole::Feeder));
         if has_intake && !self.intake_running {
-            self.pollen_status = "Shot blocked: this OpMode has an intake motor, but its intake command is not active.".to_owned();
+            self.pollen_status = "Shot blocked: activate the detected intake first.".to_owned();
             return;
         }
         if has_feeder && !self.feeder_running {
-            self.pollen_status = "Shot blocked: this OpMode has a feeder motor, but its feeder command is not active.".to_owned();
-            return;
-        }
-        if self.flywheel_target_velocity > 0.0 && self.flywheel_velocity < self.flywheel_target_velocity * 0.9 {
-            self.pollen_status = format!("Flywheel is still spinning up: {:.0}/{:.0} ticks/s.", self.flywheel_velocity, self.flywheel_target_velocity);
+            self.pollen_status = "Shot blocked: activate the detected feeder first.".to_owned();
             return;
         }
         if self.pollen_count == 0 {
             self.pollen_status = "No pollen onboard to shoot.".to_owned();
             return;
         }
-        if self.pollen_projectile.is_some() {
-            self.pollen_status = "Wait for the current pollen to land.".to_owned();
+        if self.pollen_projectile.is_some() || self.shot_cooldown > 0.0 {
+            return;
+        }
+        let target = self.flywheel_target_velocity.max(
+            program.commands.iter()
+                .filter(|command| command.method == "setVelocity")
+                .filter_map(|command| command.value)
+                .filter(|value| *value > 0.0)
+                .max_by(f32::total_cmp)
+                .unwrap_or(0.0)
+        );
+        if target <= 0.0 {
+            self.pollen_status = "No positive setVelocity() target was resolved from the selected OpMode.".to_owned();
+            return;
+        }
+        if self.flywheel_velocity < target * 0.9 {
+            self.pollen_status = format!("Flywheel spinning up: {:.0}/{:.0} ticks/s.", self.flywheel_velocity, target);
             return;
         }
 
-        let Some((command, value)) = self.detected_shooter_command() else {
-            self.pollen_status = "No outtake motor command found. Select an OpMode with OuttakeL/OuttakeR commands.".to_owned();
-            return;
-        };
-        let Some(command_value) = value.trim().parse::<f32>().ok() else {
-            self.pollen_status = format!("Shooter uses {command}({value}); resolve this expression before simulating its shot.");
-            return;
-        };
-        if command == "setPower" {
-            self.pollen_status = format!("Shooter power is {command_value:.3}. Projectile speed needs shooter calibration; no guessed speed was applied.");
-            return;
-        }
-        if command_value <= 0.0 {
-            self.pollen_status = "Detected shooter velocity is zero or negative.".to_owned();
-            return;
-        }
-        self.pollen_status = format!("Detected setVelocity({command_value:.1}) from code, but converting encoder velocity to field inches/second requires motor, gearing, and wheel calibration.");
+        let speed = (target * self.shooter_velocity_scale).clamp(12.0, 100.0);
+        let heading = self.heading_deg.to_radians();
+        let launch_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 1.0);
+        let launch_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 1.0);
+        self.pollen_projectile = Some(PollenProjectile {
+            x: launch_x, y: launch_y,
+            vx: heading.sin() * speed, vy: heading.cos() * speed,
+            elapsed: 0.0,
+        });
+        self.pollen_count -= 1;
+        self.flywheel_velocity *= 0.78;
+        self.shot_cooldown = 0.28;
+        self.pollen_status = format!("Pollen fired at an estimated {:.1} in/s. Flywheel recovering.", speed);
     }
 
     fn update_pollen(&mut self, dt: f32) {
@@ -394,8 +405,12 @@ impl VisualizerApp {
         self.last_frame = now;
         self.flower_intake_cooldown = (self.flower_intake_cooldown - dt).max(0.0);
         self.flywheel_velocity = approach(self.flywheel_velocity, self.flywheel_target_velocity, 5000.0 * dt);
+        self.shot_cooldown = (self.shot_cooldown - dt).max(0.0);
+        if self.teleop_active && self.feeder_running && self.shot_cooldown <= 0.0 {
+            self.shoot_pollen();
+        }
         self.update_pollen(dt);
-        if self.pollen_projectile.is_some() || self.flower_intake_cooldown > 0.0 {
+        if self.pollen_projectile.is_some() || self.flower_intake_cooldown > 0.0 || self.flywheel_velocity != self.flywheel_target_velocity || self.shot_cooldown > 0.0 {
             ctx.request_repaint();
         }
 
@@ -646,6 +661,7 @@ impl eframe::App for VisualizerApp {
             ui.heading("Pollen");
             ui.strong(format!("Carrying: {}/4", self.pollen_count));
             ui.label(format!("Flywheel: {:.0}/{:.0} ticks/s", self.flywheel_velocity, self.flywheel_target_velocity));
+            ui.add(egui::Slider::new(&mut self.shooter_velocity_scale, 0.005..=0.06).text("Shooter calibration (in/s per tick/s)"));
             ui.label(format!("Intake: {} · Feeder: {}", if self.intake_running { "active" } else { "off" }, if self.feeder_running { "active" } else { "off" }));
             ui.label(&self.pollen_status);
             if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
