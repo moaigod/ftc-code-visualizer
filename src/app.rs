@@ -298,7 +298,7 @@ impl VisualizerApp {
         self.last_frame = now;
         self.flower_intake_cooldown = (self.flower_intake_cooldown - dt).max(0.0);
         self.update_pollen(dt);
-        if self.pollen_projectile.is_some() {
+        if self.pollen_projectile.is_some() || self.flower_intake_cooldown > 0.0 {
             ctx.request_repaint();
         }
 
