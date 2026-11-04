@@ -87,7 +87,7 @@ impl VisualizerApp {
         if let Some((id, gamepad)) = connected {
             self.controller_status = format!("Connected: {}", gamepad.name());
             self.stick_strafe = deadzone(gamepad.value(Axis::LeftStickX));
-            self.stick_forward = deadzone(-gamepad.value(Axis::LeftStickY));
+            self.stick_forward = deadzone(gamepad.value(Axis::LeftStickY));
             self.stick_turn = deadzone(gamepad.value(Axis::RightStickX));
             let _ = id;
         } else {
@@ -108,7 +108,7 @@ impl VisualizerApp {
             "y" | "roboty" | "posy" | "gety()" => format!("{:.1} in", self.robot_y),
             "runtime" | "elapsedtime" | "elapsed_seconds" => format!("{:.2} s", self.elapsed_seconds),
             "gamepad1.left_stick_x" | "gamepad1.leftstickx" => format!("{:.2}", self.stick_strafe),
-            "gamepad1.left_stick_y" | "gamepad1.leftsticky" => format!("{:.2}", -self.stick_forward),
+            "gamepad1.left_stick_y" | "gamepad1.leftsticky" => format!("{:.2}", self.stick_forward),
             "gamepad1.right_stick_x" | "gamepad1.rightstickx" => format!("{:.2}", self.stick_turn),
             _ => format!("{} (expression not evaluated)", expression),
         }
@@ -224,7 +224,7 @@ impl eframe::App for VisualizerApp {
                     if mode.telemetry.is_empty() {
                         ui.label("No telemetry.addData() or telemetry.addLine() calls detected in this OpMode.");
                     } else {
-                        egui::ScrollArea::vertical().max_height(190.0).show(ui, |ui| {
+                        egui::ScrollArea::vertical().id_salt("telemetry_scroll").max_height(260.0).auto_shrink([false, false]).show(ui, |ui| {
                             for item in &mode.telemetry {
                                 if item.expression.is_empty() {
                                     ui.label(&item.caption);
@@ -242,7 +242,15 @@ impl eframe::App for VisualizerApp {
                 ui.label("Select an OpMode to inspect its telemetry calls.");
             }
 
-            ui.add_space(12.0); ui.separator(); ui.heading("Android Studio project");
+
+            if let Some(index) = self.selected_op_mode {
+                if let Some(mode) = self.op_modes.get(index) {
+                    if mode.kind == "Autonomous" {
+                        ui.colored_label(Color32::YELLOW, "Autonomous execution is not implemented yet. This OpMode is currently source-preview only.");
+                    }
+                }
+            }
+\n            ui.add_space(12.0); ui.separator(); ui.heading("Android Studio project");
             if ui.button("Import FTC project folder").clicked() { self.import_project(); }
             ui.label(&self.import_status);
             if let Some(name) = &self.project_name {
