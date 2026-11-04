@@ -2,12 +2,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
+pub struct TelemetryItem {
+    pub caption: String,
+    pub expression: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct OpModeInfo {
     pub name: String,
     pub kind: String,
     pub language: String,
     pub path: PathBuf,
     pub source: String,
+    pub telemetry: Vec<TelemetryItem>,
 }
 
 #[derive(Debug)]
@@ -107,6 +114,7 @@ fn parse_op_mode(path: PathBuf, source: String) -> Option<OpModeInfo> {
         kind: kind.to_owned(),
         language: language.to_owned(),
         path,
+        telemetry: parse_telemetry(&source),
         source,
     })
 }
@@ -137,4 +145,34 @@ fn find_class_name(source: &str) -> Option<String> {
         }
     }
     None
+}
+
+
+fn parse_telemetry(source: &str) -> Vec<TelemetryItem> {
+    let mut items = Vec::new();
+    for line in source.lines() {
+        let line = line.trim();
+        if let Some(start) = line.find("telemetry.addData(") {
+            let args = &line[start + "telemetry.addData(".len()..];
+            if let Some(end) = args.find(");") {
+                let args = &args[..end];
+                if let Some(comma) = args.find(',') {
+                    let caption = args[..comma].trim().trim_matches('"').trim_matches('\'').to_owned();
+                    let expression = args[comma + 1..].trim().to_owned();
+                    if !caption.is_empty() && !expression.is_empty() {
+                        items.push(TelemetryItem { caption, expression });
+                    }
+                }
+            }
+        } else if line.contains("telemetry.addLine(") {
+            let start = line.find("telemetry.addLine(").unwrap() + "telemetry.addLine(".len();
+            if let Some(end) = line[start..].find(");") {
+                let value = line[start..start + end].trim().trim_matches('"').trim_matches('\'').to_owned();
+                if !value.is_empty() {
+                    items.push(TelemetryItem { caption: value, expression: String::new() });
+                }
+            }
+        }
+    }
+    items
 }
