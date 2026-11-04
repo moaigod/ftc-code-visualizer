@@ -103,18 +103,44 @@ impl VisualizerApp {
 
 
     fn telemetry_value(&self, expression: &str) -> String {
-        let key = expression.replace(' ', "").to_lowercase();
+        let key = expression.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase();
+
+        // PedroPathing and common pose APIs: expose the visualizer's simulated pose.
         match key.as_str() {
-            "heading" | "headingdeg" | "robotheading" | "heading_degrees" => format!("{:.1}°", self.heading_deg),
-            "headingrad" | "headingradians" => format!("{:.3} rad", self.heading_deg.to_radians()),
-            "x" | "robotx" | "posx" | "getx()" => format!("{:.1} in", self.robot_x),
-            "y" | "roboty" | "posy" | "gety()" => format!("{:.1} in", self.robot_y),
-            "runtime" | "elapsedtime" | "elapsed_seconds" => format!("{:.2} s", self.elapsed_seconds),
-            "gamepad1.left_stick_x" | "gamepad1.leftstickx" => format!("{:.2}", self.stick_strafe),
-            "gamepad1.left_stick_y" | "gamepad1.leftsticky" => format!("{:.2}", self.stick_forward),
-            "gamepad1.right_stick_x" | "gamepad1.rightstickx" => format!("{:.2}", self.stick_turn),
-            _ => format!("{} (expression not evaluated)", expression),
+            "heading" | "headingdeg" | "robotheading" | "heading_degrees" => return format!("{:.1}°", self.heading_deg),
+            "headingrad" | "headingradians" | "robotpose.heading()" | "follower.pose().heading()" => {
+                return format!("{:.3} rad", self.heading_deg.to_radians());
+            }
+            "x" | "robotx" | "posx" | "getx()" | "robotpose.x()" | "follower.pose().x()" => {
+                return format!("{:.1} in", self.robot_x);
+            }
+            "y" | "roboty" | "posy" | "gety()" | "robotpose.y()" | "follower.pose().y()" => {
+                return format!("{:.1} in", self.robot_y);
+            }
+            "runtime" | "elapsedtime" | "elapsed_seconds" => return format!("{:.2} s", self.elapsed_seconds),
+            "gamepad1.left_stick_x" | "gamepad1.leftstickx" => return format!("{:.2}", self.stick_strafe),
+            "gamepad1.left_stick_y" | "gamepad1.leftsticky" => return format!("{:.2}", self.stick_forward),
+            "gamepad1.right_stick_x" | "gamepad1.rightstickx" => return format!("{:.2}", self.stick_turn),
+            _ => {}
         }
+
+        // Resolve simple numeric variables declared in the selected OpMode.
+        // Complex Java/Kotlin expressions are intentionally not guessed.
+        if matches!(key.as_str(), "p1" | "i1" | "d1" | "f1") {
+            if let Some(value) = self.selected_op_mode
+                .and_then(|index| self.op_modes.get(index))
+                .and_then(|mode| numeric_variable(&mode.source, &key))
+            {
+                return format!("{value}");
+            }
+            return format!("{} (variable value unavailable)", expression);
+        }
+
+        if key.contains(".getvelocity()") {
+            return format!("{} (requires a simulated motor or live motor data)", expression);
+        }
+
+        format!("{} (expression not evaluated)", expression)
     }
 
     fn update_simulation(&mut self, ctx: &egui::Context) {
@@ -195,6 +221,24 @@ impl VisualizerApp {
         painter.text(rect.right_bottom() - Vec2::new(7.0, 7.0), Align2::RIGHT_BOTTOM,
             "144 in × 144 in", FontId::proportional(11.0), Color32::LIGHT_GRAY);
     }
+}
+
+
+fn numeric_variable(source: &str, variable: &str) -> Option<f32> {
+    for line in source.lines() {
+        let (left, right) = line.split_once('=')?;
+        let declared_name = left
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter(|part| !part.is_empty())
+            .last()?;
+        if declared_name == variable {
+            let literal = right.trim().trim_end_matches(';').trim();
+            if let Ok(value) = literal.parse::<f32>() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 fn deadzone(value: f32) -> f32 {
