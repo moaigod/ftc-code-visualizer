@@ -340,26 +340,34 @@ impl VisualizerApp {
             pollen.vx *= friction;
             pollen.vy *= friction;
 
+            // Treat the robot as its actual rotated 18x18-inch square,
+            // rather than a 12.73-inch-radius circle that overstates its hitbox.
             let dx = pollen.x - self.robot_x;
             let dy = pollen.y - self.robot_y;
-            let distance = dx.hypot(dy);
-            let minimum = robot_radius + pollen.radius;
-            if distance < minimum {
-                let (nx, ny) = if distance > 0.001 { (dx / distance, dy / distance) } else { (0.0, 1.0) };
-                let overlap = minimum - distance;
+            let local_x = dx * heading.cos() - dy * heading.sin();
+            let local_y = dx * heading.sin() + dy * heading.cos();
+            let closest_x = local_x.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
+            let closest_y = local_y.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
+            let away_x = local_x - closest_x;
+            let away_y = local_y - closest_y;
+            let distance = away_x.hypot(away_y);
+            if distance < pollen.radius {
+                let (local_nx, local_ny) = if distance > 0.001 {
+                    (away_x / distance, away_y / distance)
+                } else if local_x.abs() > local_y.abs() {
+                    (local_x.signum(), 0.0)
+                } else {
+                    (0.0, local_y.signum().copysign(1.0))
+                };
+                let nx = local_nx * heading.cos() + local_ny * heading.sin();
+                let ny = -local_nx * heading.sin() + local_ny * heading.cos();
+                let overlap = pollen.radius - distance;
                 pollen.x += nx * overlap;
                 pollen.y += ny * overlap;
                 let push_speed = robot_speed.max(2.0);
                 pollen.vx = pollen.vx * 0.25 + nx * push_speed * 0.85;
                 pollen.vy = pollen.vy * 0.25 + ny * push_speed * 0.85;
             }
-
-            let max_x = FIELD_SIZE_IN - pollen.radius;
-            let max_y = FIELD_SIZE_IN - pollen.radius;
-            if pollen.x < pollen.radius { pollen.x = pollen.radius; pollen.vx = pollen.vx.abs() * 0.35; }
-            if pollen.x > max_x { pollen.x = max_x; pollen.vx = -pollen.vx.abs() * 0.35; }
-            if pollen.y < pollen.radius { pollen.y = pollen.radius; pollen.vy = pollen.vy.abs() * 0.35; }
-            if pollen.y > max_y { pollen.y = max_y; pollen.vy = -pollen.vy.abs() * 0.35; }
         }
 
         // Resolve overlaps between loose pollen pieces with a soft, damped bounce.
