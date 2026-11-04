@@ -86,7 +86,7 @@ impl Default for VisualizerApp {
             feeder_running: false,
             flywheel_velocity: 0.0,
             flywheel_target_velocity: 0.0,
-            shooter_velocity_scale: 0.02,
+            shooter_velocity_scale: 0.0320,
             shot_cooldown: 0.0,
             intake_cycle_timer: 0.0,
             shot_sequence: 0,
