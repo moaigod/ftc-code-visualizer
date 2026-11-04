@@ -92,17 +92,27 @@ pub fn interpret(source: &str) -> Program {
         }
     }
 
-    for (button, start, end) in &button_blocks {
-        let body = &tokens[*start..=*end];
-        let roles = body.iter().filter_map(|t| t.ident()).collect::<Vec<_>>();
-        let action = if roles.iter().any(|x| x.to_ascii_lowercase().contains("intake")) {
-            "intake"
-        } else if roles.iter().any(|x| x.to_ascii_lowercase().contains("outtake") || x.to_ascii_lowercase().contains("shooter")) {
-            "outtake/shooter"
-        } else if roles.iter().any(|x| x.to_ascii_lowercase().contains("feeder")) {
-            "feeder"
-        } else { "other FTC action" };
-        if !program.button_actions.iter().any(|(b, _)| b == button) {
+    for (button, _start, _end) in &button_blocks {
+        let mut has_intake = false;
+        let mut has_feeder = false;
+        let mut has_outtake = false;
+        for command in program.commands.iter().filter(|command| command.button.as_deref() == Some(button)) {
+            if let Some(motor) = program.motors.iter().find(|motor| motor.variable == command.motor) {
+                match &motor.role {
+                    MotorRole::Intake => has_intake = true,
+                    MotorRole::Feeder => has_feeder = true,
+                    MotorRole::Outtake => has_outtake = true,
+                    _ => {}
+                }
+            }
+        }
+        let action = if has_intake { "intake" }
+            else if has_feeder { "feeder" }
+            else if has_outtake { "outtake/shooter" }
+            else { "other FTC action" };
+        if let Some(existing) = program.button_actions.iter_mut().find(|(b, _)| b == button) {
+            existing.1 = action.to_owned();
+        } else {
             program.button_actions.push((button.clone(), action.to_owned()));
         }
     }
