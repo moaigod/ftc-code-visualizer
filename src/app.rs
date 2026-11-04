@@ -507,14 +507,69 @@ impl VisualizerApp {
 
         let center = Pos2::new(field.left() + self.robot_x * scale, field.bottom() - self.robot_y * scale);
         let half = ROBOT_SIZE_IN * scale / 2.0;
-        let robot = Rect::from_center_size(center, Vec2::splat(half * 2.0));
-        painter.rect_filled(robot, 2.0, Color32::from_rgb(230, 55, 165));
-        painter.rect_stroke(robot, 2.0, Stroke::new(1.5_f32, Color32::WHITE), egui::StrokeKind::Inside);
         let h = self.heading_deg.to_radians();
-        // Heading: 0 degrees points up-field; positive angles rotate clockwise.
-        let nose = Pos2::new(center.x + h.sin() * half, center.y - h.cos() * half);
-        painter.line_segment([center, nose], Stroke::new(3.0_f32, Color32::YELLOW));
-        painter.circle_filled(nose, 3.5, Color32::YELLOW);
+        // Local robot coordinates: +X is right, +Y is forward. Heading zero faces up-field.
+        let transform = |x: f32, y: f32| -> Pos2 {
+            let right_x = h.cos();
+            let right_y = h.sin();
+            let forward_x = h.sin();
+            let forward_y = -h.cos();
+            Pos2::new(
+                center.x + (x * right_x + y * forward_x) * scale,
+                center.y + (x * right_y + y * forward_y) * scale,
+            )
+        };
+
+        // Chamfered chassis, rotated as one rigid body with the robot heading.
+        let chassis_outline = [
+            (-7.0, -9.0), (7.0, -9.0), (9.0, -7.0), (9.0, 7.0),
+            (7.0, 9.0), (-7.0, 9.0), (-9.0, 7.0), (-9.0, -7.0),
+        ].iter().map(|(x, y)| transform(*x, *y)).collect::<Vec<_>>();
+        painter.add(egui::Shape::convex_polygon(
+            chassis_outline, Color32::from_rgb(42, 53, 65),
+            Stroke::new(1.8, Color32::from_rgb(190, 211, 224)),
+        ));
+
+        // Four visible drive wheels along the chassis sides.
+        for x in [-9.2, 9.2] {
+            for y in [-5.5, 5.5] {
+                let wheel = [
+                    transform(x - 1.0, y - 2.8), transform(x + 1.0, y - 2.8),
+                    transform(x + 1.0, y + 2.8), transform(x - 1.0, y + 2.8),
+                ];
+                painter.add(egui::Shape::convex_polygon(
+                    wheel.to_vec(), Color32::from_rgb(18, 22, 28),
+                    Stroke::new(1.0, Color32::from_rgb(125, 145, 160)),
+                ));
+                painter.line_segment(
+                    [transform(x - 0.7, y), transform(x + 0.7, y)],
+                    Stroke::new(1.0, Color32::from_rgb(90, 110, 125)),
+                );
+            }
+        }
+
+        // Center electronics / battery plate.
+        let deck = [
+            transform(-5.8, -5.8), transform(5.8, -5.8),
+            transform(5.8, 5.8), transform(-5.8, 5.8),
+        ];
+        painter.add(egui::Shape::convex_polygon(
+            deck.to_vec(), Color32::from_rgb(65, 88, 105),
+            Stroke::new(1.0, Color32::from_rgb(130, 165, 185)),
+        ));
+        painter.circle_filled(center, 2.0 * scale, Color32::from_rgb(80, 205, 190));
+
+        // Front intake bar makes the robot's forward direction immediately visible.
+        let intake = [
+            transform(-5.8, 8.0), transform(5.8, 8.0),
+            transform(5.8, 9.8), transform(-5.8, 9.8),
+        ];
+        painter.add(egui::Shape::convex_polygon(
+            intake.to_vec(), Color32::from_rgb(240, 177, 54),
+            Stroke::new(1.0, Color32::WHITE),
+        ));
+        let nose = transform(0.0, 10.8);
+        painter.circle_filled(nose, (2.0 * scale).max(2.5), Color32::from_rgb(255, 225, 105));
         painter.text(rect.left_top() + Vec2::new(7.0, 7.0), Align2::LEFT_TOP,
             "BIOBUZZ FIELD", FontId::proportional(12.0), Color32::LIGHT_GRAY);
         painter.text(rect.right_bottom() - Vec2::new(7.0, 7.0), Align2::RIGHT_BOTTOM,
