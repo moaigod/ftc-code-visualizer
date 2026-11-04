@@ -54,6 +54,7 @@ pub struct VisualizerApp {
     flywheel_target_velocity: f32,
     shooter_velocity_scale: f32,
     shot_cooldown: f32,
+    intake_cycle_timer: f32,
 }
 
 impl Default for VisualizerApp {
@@ -85,6 +86,7 @@ impl Default for VisualizerApp {
             flywheel_target_velocity: 0.0,
             shooter_velocity_scale: 0.02,
             shot_cooldown: 0.0,
+            intake_cycle_timer: 0.0,
         }
     }
 }
@@ -181,7 +183,6 @@ impl VisualizerApp {
         let normalized = action.to_ascii_lowercase();
         if normalized.contains("intake") {
             self.intake_running = true;
-            self.intake_pollen();
         } else if normalized.contains("feeder") {
             self.feeder_running = true;
             self.pollen_status = "Feeder activated by the selected OpMode.".to_owned();
@@ -295,7 +296,8 @@ impl VisualizerApp {
             elapsed: 0.0,
         });
         self.pollen_count -= 1;
-        self.flywheel_velocity *= 0.78;
+        let velocity_loss_fraction = (0.12 + (target / 3000.0) * 0.18).clamp(0.12, 0.35);
+        self.flywheel_velocity *= 1.0 - velocity_loss_fraction;
         self.shot_cooldown = 0.28;
         self.pollen_status = format!("Pollen fired at an estimated {:.1} in/s. Flywheel recovering.", speed);
     }
@@ -404,13 +406,20 @@ impl VisualizerApp {
         let dt = (now - self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
         self.flower_intake_cooldown = (self.flower_intake_cooldown - dt).max(0.0);
+        self.intake_cycle_timer = (self.intake_cycle_timer - dt).max(0.0);
+        if self.intake_running && self.intake_cycle_timer <= 0.0 {
+            self.intake_pollen();
+            self.intake_cycle_timer = 0.4;
+        } else if !self.intake_running {
+            self.intake_cycle_timer = 0.0;
+        }
         self.flywheel_velocity = approach(self.flywheel_velocity, self.flywheel_target_velocity, 5000.0 * dt);
         self.shot_cooldown = (self.shot_cooldown - dt).max(0.0);
         if self.teleop_active && self.feeder_running && self.shot_cooldown <= 0.0 {
             self.shoot_pollen();
         }
         self.update_pollen(dt);
-        if self.pollen_projectile.is_some() || self.flower_intake_cooldown > 0.0 || self.flywheel_velocity != self.flywheel_target_velocity || self.shot_cooldown > 0.0 {
+        if self.pollen_projectile.is_some() || self.flower_intake_cooldown > 0.0 || self.intake_running || self.flywheel_velocity != self.flywheel_target_velocity || self.shot_cooldown > 0.0 {
             ctx.request_repaint();
         }
 
