@@ -66,7 +66,7 @@ impl VisualizerApp {
         painter.rect_stroke(
             rect,
             4.0,
-            Stroke::new(2.0, Color32::from_gray(180)),
+            Stroke::new(2.0_f32, Color32::from_gray(180)),
             egui::StrokeKind::Inside,
         );
 
@@ -95,30 +95,30 @@ impl VisualizerApp {
             };
             painter.line_segment(
                 [Pos2::new(x, field.top()), Pos2::new(x, field.bottom())],
-                Stroke::new(1.0, color),
+                Stroke::new(1.0_f32, color),
             );
             painter.line_segment(
                 [Pos2::new(field.left(), y), Pos2::new(field.right(), y)],
-                Stroke::new(1.0, color),
+                Stroke::new(1.0_f32, color),
             );
         }
 
         painter.rect_stroke(
             field,
             0.0,
-            Stroke::new(2.0, Color32::from_gray(190)),
+            Stroke::new(2.0_f32, Color32::from_gray(190)),
             egui::StrokeKind::Inside,
         );
 
         let center = to_screen(72.0, 72.0);
-        painter.circle_stroke(center, scale * 12.0, Stroke::new(2.0, Color32::from_gray(150)));
+        painter.circle_stroke(center, scale * 12.0, Stroke::new(2.0_f32, Color32::from_gray(150)));
         painter.line_segment(
             [to_screen(72.0, 0.0), to_screen(72.0, 144.0)],
-            Stroke::new(1.5, Color32::from_gray(120)),
+            Stroke::new(1.5_f32, Color32::from_gray(120)),
         );
         painter.line_segment(
             [to_screen(0.0, 72.0), to_screen(144.0, 72.0)],
-            Stroke::new(1.5, Color32::from_gray(120)),
+            Stroke::new(1.5_f32, Color32::from_gray(120)),
         );
 
         let robot_center = to_screen(self.robot_x, self.robot_y);
@@ -131,7 +131,7 @@ impl VisualizerApp {
         painter.rect_stroke(
             robot_rect,
             3.0,
-            Stroke::new(2.0, Color32::WHITE),
+            Stroke::new(2.0_f32, Color32::WHITE),
             egui::StrokeKind::Inside,
         );
 
@@ -142,7 +142,7 @@ impl VisualizerApp {
         );
         painter.line_segment(
             [robot_center, nose],
-            Stroke::new(4.0, Color32::YELLOW),
+            Stroke::new(4.0_f32, Color32::YELLOW),
         );
         let left = heading + 2.5;
         let right = heading - 2.5;
