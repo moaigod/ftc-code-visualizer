@@ -88,6 +88,8 @@ pub struct VisualizerApp {
     blue_hive_extra_nectar: u8,
     red_hive_tipped: bool,
     blue_hive_tipped: bool,
+    red_hive_tip_count: u32,
+    blue_hive_tip_count: u32,
 }
 
 impl Default for VisualizerApp {
@@ -127,6 +129,8 @@ impl Default for VisualizerApp {
             blue_hive_extra_nectar: 0,
             red_hive_tipped: false,
             blue_hive_tipped: false,
+            red_hive_tip_count: 0,
+            blue_hive_tip_count: 0,
         }
     }
 }
@@ -275,7 +279,9 @@ impl VisualizerApp {
             // Inverse of the field transform used to draw the robot:
             // local +Y points toward the front of the chassis.
             let lx=dx*h.cos()+dy*h.sin(); let ly=dx*h.sin()-dy*h.cos();
-            let cx=lx.clamp(-5.8,5.8); let cy=ly.clamp(8.0,9.8);
+            // Slightly wider/deeper trigger zone than the rendered intake bar:
+            // any scoring element physically touching the front intake is eligible.
+            let cx=lx.clamp(-7.0,7.0); let cy=ly.clamp(7.5,11.0);
             let d=(lx-cx).hypot(ly-cy);
             (d<=e.radius).then_some((i,d))
         }).min_by(|a,b| a.1.total_cmp(&b.1));
@@ -484,7 +490,7 @@ impl VisualizerApp {
                 (previous_x, previous_y), (projectile.x, projectile.y),
                 HIVE_BLUE_CENTER, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN,
             );
-            if in_red_cell && !self.red_hive_tipped {
+            if in_red_cell {
                 match projectile.kind {
                     ElementKind::Pollen => self.red_hive_pollen = self.red_hive_pollen.saturating_add(1),
                     ElementKind::Nectar => self.red_hive_extra_nectar = self.red_hive_extra_nectar.saturating_add(1),
@@ -493,15 +499,17 @@ impl VisualizerApp {
                 let load = HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
                     + self.red_hive_extra_nectar as f32 * HIVE_NECTAR_LOAD_UNITS
                     + self.red_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS;
-                if load >= HIVE_TIP_LOAD_UNITS {
+                let next_tip = HIVE_TIP_LOAD_UNITS * (self.red_hive_tip_count + 1) as f32;
+                if load >= next_tip {
                     self.red_hive_tipped = true;
-                    self.pollen_status = format!("Red hive tipped at {:.1} load units.", load);
+                    self.red_hive_tip_count += 1;
+                    self.pollen_status = format!("Red hive tipped again! Tip {} · {:.1} load units.", self.red_hive_tip_count, load);
                 } else {
-                    self.pollen_status = format!("Red hive: {:.1}/{:.1} load units.", load, HIVE_TIP_LOAD_UNITS);
+                    self.pollen_status = format!("Red hive: {:.1}/{:.1} load units toward tip {}.", load, next_tip, self.red_hive_tip_count + 1);
                 }
                 return;
             }
-            if in_blue_cell && !self.blue_hive_tipped {
+            if in_blue_cell {
                 match projectile.kind {
                     ElementKind::Pollen => self.blue_hive_pollen = self.blue_hive_pollen.saturating_add(1),
                     ElementKind::Nectar => self.blue_hive_extra_nectar = self.blue_hive_extra_nectar.saturating_add(1),
@@ -510,11 +518,13 @@ impl VisualizerApp {
                 let load = HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
                     + self.blue_hive_extra_nectar as f32 * HIVE_NECTAR_LOAD_UNITS
                     + self.blue_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS;
-                if load >= HIVE_TIP_LOAD_UNITS {
+                let next_tip = HIVE_TIP_LOAD_UNITS * (self.blue_hive_tip_count + 1) as f32;
+                if load >= next_tip {
                     self.blue_hive_tipped = true;
-                    self.pollen_status = format!("Blue hive tipped at {:.1} load units.", load);
+                    self.blue_hive_tip_count += 1;
+                    self.pollen_status = format!("Blue hive tipped again! Tip {} · {:.1} load units.", self.blue_hive_tip_count, load);
                 } else {
-                    self.pollen_status = format!("Blue hive: {:.1}/{:.1} load units.", load, HIVE_TIP_LOAD_UNITS);
+                    self.pollen_status = format!("Blue hive: {:.1}/{:.1} load units toward tip {}.", load, next_tip, self.blue_hive_tip_count + 1);
                 }
                 return;
             }
@@ -703,6 +713,28 @@ impl VisualizerApp {
                 FontId::proportional(16.0), Color32::WHITE);
         }
         let scale = field.width() / FIELD_SIZE_IN;
+
+        // Show the scoring pieces that have entered each hive. They are stored
+        // as load counters, so render small markers rather than deleting them visually.
+        for (center, pollen_count, nectar_count, color) in [
+            (HIVE_RED_CENTER, self.red_hive_pollen, self.red_hive_extra_nectar, Color32::from_rgb(235, 55, 65)),
+            (HIVE_BLUE_CENTER, self.blue_hive_pollen, self.blue_hive_extra_nectar, Color32::from_rgb(55, 125, 245)),
+        ] {
+            let total = pollen_count as usize + nectar_count as usize;
+            for i in 0..total {
+                let col = (i % 5) as f32;
+                let row = (i / 5) as f32;
+                let p = Pos2::new(
+                    field.left() + (center.0 - 6.0 + col * 3.0) * scale,
+                    field.bottom() - (center.1 + 3.0 - row * 3.0) * scale,
+                );
+                let is_nectar = i >= pollen_count as usize;
+                let radius = if is_nectar { 1.25 } else { 0.9 };
+                let marker_color = if is_nectar { color } else { Color32::from_rgb(255, 218, 35) };
+                painter.circle_filled(p, radius * scale, marker_color);
+                painter.circle_stroke(p, radius * scale, Stroke::new(0.6, Color32::WHITE));
+            }
+        }
 
         // Draw smaller pollen first so larger pieces are layered over them.
         let mut pollen_draw_order = self.field_pollen.iter().collect::<Vec<_>>();
