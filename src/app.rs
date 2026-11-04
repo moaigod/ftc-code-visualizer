@@ -478,13 +478,30 @@ impl VisualizerApp {
 fn find_gamepad_actions(source: &str) -> Vec<(String, String)> {
     let mut results = Vec::new();
     let lines = source.lines().collect::<Vec<_>>();
-    let buttons = ["a", "b", "x", "y", "left_bumper", "right_bumper",
-        "dpad_up", "dpad_down", "dpad_left", "dpad_right", "start", "back"];
+    // Accept Xbox and PlayStation aliases for the same physical face-button positions.
+    let buttons: [(&str, &[&str]); 12] = [
+        ("south", &["a", "cross"]),
+        ("east", &["b", "circle"]),
+        ("west", &["x", "square"]),
+        ("north", &["y", "triangle"]),
+        ("left_bumper", &["left_bumper"]),
+        ("right_bumper", &["right_bumper"]),
+        ("dpad_up", &["dpad_up"]),
+        ("dpad_down", &["dpad_down"]),
+        ("dpad_left", &["dpad_left"]),
+        ("dpad_right", &["dpad_right"]),
+        ("start", &["start"]),
+        ("back", &["back"]),
+    ];
 
     for (line_index, line) in lines.iter().enumerate() {
         let lower = line.to_ascii_lowercase();
         if !lower.contains("if") || !lower.contains("gamepad1.") { continue; }
-        let Some(button) = buttons.iter().find(|button| lower.contains(&format!("gamepad1.{button}"))) else { continue; };
+        let Some(button) = buttons.iter().find_map(|(position, aliases)| {
+            aliases.iter()
+                .find(|alias| lower.contains(&format!("gamepad1.{alias}")))
+                .map(|_| *position)
+        }) else { continue; };
 
         let mut block = String::new();
         let mut depth = 0_i32;
