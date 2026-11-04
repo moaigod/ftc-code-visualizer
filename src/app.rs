@@ -134,7 +134,15 @@ impl VisualizerApp {
         while gilrs.next_event().is_some() {}
         let connected = gilrs.gamepads().find(|(_, gamepad)| gamepad.is_connected());
         if let Some((_, gamepad)) = connected {
-            self.controller_status = format!("Connected: {}", gamepad.name());
+            let detected_name = gamepad.name().to_ascii_lowercase();
+            let layout = if detected_name.contains("dualsense") || detected_name.contains("dualshock") || detected_name.contains("playstation") || detected_name.contains("sony") {
+                "PlayStation"
+            } else if detected_name.contains("xbox") || detected_name.contains("xinput") || detected_name.contains("microsoft") {
+                "Xbox"
+            } else {
+                "standard gamepad"
+            };
+            self.controller_status = format!("Connected: {} ({layout} detected)", gamepad.name());
             self.stick_strafe = deadzone(gamepad.value(Axis::LeftStickX));
             self.stick_forward = deadzone(gamepad.value(Axis::LeftStickY));
             self.stick_turn = deadzone(gamepad.value(Axis::RightStickX));
