@@ -124,19 +124,101 @@ pub fn interpret(source: &str) -> Program {
 }
 
 pub fn resolve_number(source: &str, expression: &str) -> Option<f32> {
-    let expr = expression.trim();
-    if let Ok(v) = expr.parse::<f32>() { return Some(v); }
-    let clean = strip_comments(source);
-    let tokens = tokenize(&clean);
-    for i in 0..tokens.len().saturating_sub(2) {
-        if tokens[i].ident_is(expr) && tokens[i + 1].punct("=") {
-            let mut end = i + 2;
-            while end < tokens.len() && !tokens[end].punct(";") { end += 1; }
-            let value = tokens[i + 2..end].iter().map(|t| t.text.as_str()).collect::<String>();
-            if let Ok(v) = value.parse::<f32>() { return Some(v); }
+    resolve_expression(source, expression.trim(), 0)
+}
+
+fn resolve_expression(source: &str, expression: &str, depth: usize) -> Option<f32> {
+    if depth > 12 { return None; }
+    let mut parser = NumericParser { source, chars: expression.chars().collect(), position: 0, depth };
+    let value = parser.parse_sum()?;
+    parser.skip_space();
+    if parser.position == parser.chars.len() { Some(value) } else { None }
+}
+
+struct NumericParser<'a> {
+    source: &'a str,
+    chars: Vec<char>,
+    position: usize,
+    depth: usize,
+}
+
+impl NumericParser<'_> {
+    fn skip_space(&mut self) {
+        while self.position < self.chars.len() && self.chars[self.position].is_whitespace() {
+            self.position += 1;
         }
     }
-    None
+
+    fn consume(&mut self, expected: char) -> bool {
+        self.skip_space();
+        if self.chars.get(self.position) == Some(&expected) {
+            self.position += 1;
+            true
+        } else { false }
+    }
+
+    fn parse_sum(&mut self) -> Option<f32> {
+        let mut value = self.parse_product()?;
+        loop {
+            if self.consume('+') { value += self.parse_product()?; }
+            else if self.consume('-') { value -= self.parse_product()?; }
+            else { return Some(value); }
+        }
+    }
+
+    fn parse_product(&mut self) -> Option<f32> {
+        let mut value = self.parse_unary()?;
+        loop {
+            if self.consume('*') { value *= self.parse_unary()?; }
+            else if self.consume('/') {
+                let divisor = self.parse_unary()?;
+                if divisor == 0.0 { return None; }
+                value /= divisor;
+            } else { return Some(value); }
+        }
+    }
+
+    fn parse_unary(&mut self) -> Option<f32> {
+        if self.consume('-') { return Some(-self.parse_unary()?); }
+        if self.consume('+') { return self.parse_unary(); }
+        self.parse_atom()
+    }
+
+    fn parse_atom(&mut self) -> Option<f32> {
+        self.skip_space();
+        if self.consume('(') {
+            let value = self.parse_sum()?;
+            if !self.consume(')') { return None; }
+            return Some(value);
+        }
+        self.skip_space();
+        let start = self.position;
+        while self.position < self.chars.len() {
+            let c = self.chars[self.position];
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                self.position += 1;
+            } else { break; }
+        }
+        if start == self.position { return None; }
+        let token = self.chars[start..self.position].iter().collect::<String>();
+        if let Ok(value) = token.parse::<f32>() { return Some(value); }
+        resolve_variable(self.source, &token, self.depth + 1)
+    }
+}
+
+fn resolve_variable(source: &str, variable: &str, depth: usize) -> Option<f32> {
+    if depth > 12 { return None; }
+    let tokens = tokenize(&strip_comments(source));
+    let mut result = None;
+    for i in 0..tokens.len().saturating_sub(2) {
+        if tokens[i].ident_is(variable) && tokens[i + 1].punct("=") {
+            let mut end = i + 2;
+            while end < tokens.len() && !tokens[end].punct(";") && !tokens[end].punct("}") { end += 1; }
+            let expression = tokens[i + 2..end].iter().map(|t| t.text.as_str()).collect::<String>();
+            result = resolve_expression(source, &expression, depth + 1);
+        }
+    }
+    result
 }
 
 fn classify_motor(variable: &str, hardware: &str) -> MotorRole {
