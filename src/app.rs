@@ -35,6 +35,7 @@ struct Pollen {
     y: f32,
     radius: f32,
     from_flower: bool,
+    scored: bool,
     kind: ElementKind,
     hive: Option<HiveSide>,
     vx: f32,
@@ -277,6 +278,7 @@ impl VisualizerApp {
         }
         let h = self.heading_deg.to_radians();
         let nearest = self.field_pollen.iter().enumerate().filter_map(|(i, e)| {
+            if e.scored { return None; }
             let dx=e.x-self.robot_x; let dy=e.y-self.robot_y;
             // Inverse of the field transform used to draw the robot:
             // local +Y points toward the front of the chassis.
@@ -348,6 +350,10 @@ impl VisualizerApp {
         let robot_speed = self.forward_velocity.hypot(self.strafe_velocity);
         let heading = self.heading_deg.to_radians();
         for pollen in &mut self.field_pollen {
+            // Scored elements are permanently secured in the hive: they remain visible,
+            // but cannot be pushed by the robot or collected again.
+            if pollen.scored { continue; }
+
             // Pollen that belongs to a flower stays anchored in its stack.
             if pollen.from_flower {
                 pollen.vx = 0.0;
@@ -520,19 +526,22 @@ impl VisualizerApp {
                     }
                 };
 
-                // Keep scored elements at their actual landing position and
-                // original field size; scoring must not resize or reposition them.
+                // Place the visible scored piece fully inside the scoring cell,
+                // even when the projectile first crossed the boundary at its edge.
+                // Scored pieces remain visible but are no longer physical loose pieces.
                 let scored_radius = match projectile.kind {
                     ElementKind::Pollen => POLLEN_RADIUS_IN,
                     ElementKind::Nectar => NECTAR_RADIUS_IN,
                 };
+                let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
                 self.field_pollen.push(Pollen {
-                    x: projectile.x,
-                    y: projectile.y,
+                    x: projectile.x.clamp(min_x + scored_radius, max_x - scored_radius),
+                    y: projectile.y.clamp(min_y + scored_radius, max_y - scored_radius),
                     radius: scored_radius,
                     from_flower: false,
+                    scored: true,
                     kind: projectile.kind,
-                    hive: projectile.hive,
+                    hive: Some(side),
                     vx: 0.0,
                     vy: 0.0,
                 });
@@ -578,6 +587,7 @@ impl VisualizerApp {
                     y: projectile.y.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
                     radius: match projectile.kind { ElementKind::Pollen => POLLEN_RADIUS_IN, ElementKind::Nectar => NECTAR_RADIUS_IN },
                     from_flower: false,
+                    scored: false,
                     kind: projectile.kind,
                     hive: projectile.hive,
                     vx: projectile.vx * 0.18,
@@ -1047,13 +1057,13 @@ fn starting_field_pollen() -> Vec<Pollen> {
     ];
     for (x, y) in flower_positions {
         for radius in flower_radii {
-            pollen.push(Pollen { x, y, radius, from_flower: true, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
+            pollen.push(Pollen { x, y, radius, from_flower: true, scored: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
         }
     }
 
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
-        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
+        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, scored: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
         pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
     }
 
@@ -1061,7 +1071,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
     // three starting Nectar: Red at (57,59), Blue at (86,85).
     for (offset_x, offset_y) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
         for (center, side) in [(RED_HIVE_A,HiveSide::Red),(BLUE_HIVE_A,HiveSide::Blue)] {
-            pollen.push(Pollen{x:center.0+offset_x,y:center.1+offset_y,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,hive:Some(side),vx:0.0,vy:0.0});
+            pollen.push(Pollen{x:center.0+offset_x,y:center.1+offset_y,radius:NECTAR_RADIUS_IN,from_flower:false,scored:false,kind:ElementKind::Nectar,hive:Some(side),vx:0.0,vy:0.0});
         }
     }
 
