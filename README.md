@@ -62,3 +62,15 @@ cargo run
 ## Important limitation
 
 Android FTC OpModes run inside the FTC Android app on the Control Hub or Driver Hub environment. They cannot be executed directly as Windows desktop code. This project imports and interprets supported source patterns to create a desktop simulation; it is not a replacement for the FTC SDK or the Android build.
+
+
+## BIOBUZZ pollen interaction
+
+The field simulation stages 4 pollen at each of the four Flowers and 4 in each alliance Garden (24 field pollen total). The robot starts with the 4 preloaded pollen specified by the 2026–2027 BIOBUZZ manual.
+
+- Use the front intake near a yellow pollen ball and press **E** or click **Intake pollen**.
+- Press **Space** or click **Shoot pollen** to launch one carried pollen.
+- The carried count is capped at 4. A launched pollen is animated and returned to the field when its flight ends.
+- The Pollen panel displays the robot's current carried count.
+
+The Flower and Garden positions are approximate staging coordinates on the 144 × 144 inch field. They are intended as an interactive simulation layout, not a surveyed field CAD model. This requested return-to-field shot behavior is a simulator mechanic; official BIOBUZZ scoring launches pollen into the upward-facing Hive cell.
