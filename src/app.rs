@@ -18,7 +18,7 @@ const HIVE_NECTAR_LOAD_UNITS: f32 = 1.6;
 const HIVE_POLLEN_LOAD_UNITS: f32 = 1.0;
 const RED_HIVE_A: (f32, f32) = (57.0, 57.0); // Starts untipped
 const RED_HIVE_B: (f32, f32) = (57.0, 81.0); // Starts tipped
-const BLUE_HIVE_A: (f32, f32) = (84.0, 84.0); // Starts untipped
+const BLUE_HIVE_A: (f32, f32) = (81.0, 81.0); // Starts untipped
 const BLUE_HIVE_B: (f32, f32) = (81.0, 57.0); // Starts tipped
 const HIVE_CELL_HALF_WIDTH_IN: f32 = 11.0;
 const HIVE_CELL_HALF_DEPTH_IN: f32 = 7.0;
@@ -499,30 +499,75 @@ impl VisualizerApp {
             let in_blue_cell = segment_intersects_rect((previous_x, previous_y), (projectile.x, projectile.y), blue_untipped, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN);
             if in_red_cell || in_blue_cell {
                 let (side, center) = if in_red_cell {(HiveSide::Red,red_untipped)} else {(HiveSide::Blue,blue_untipped)};
-                let (pollen_count, nectar_count, tipped, tip_count) = match side {
+                let (pollen_count, nectar_count) = match side {
                     HiveSide::Red => {
                         match projectile.kind { ElementKind::Pollen => self.red_hive_pollen=self.red_hive_pollen.saturating_add(1), ElementKind::Nectar => self.red_hive_extra_nectar=self.red_hive_extra_nectar.saturating_add(1) }
-                        (self.red_hive_pollen,self.red_hive_extra_nectar,&mut self.red_hive_tipped,&mut self.red_hive_tip_count)
+                        (self.red_hive_pollen,self.red_hive_extra_nectar)
                     }
                     HiveSide::Blue => {
                         match projectile.kind { ElementKind::Pollen => self.blue_hive_pollen=self.blue_hive_pollen.saturating_add(1), ElementKind::Nectar => self.blue_hive_extra_nectar=self.blue_hive_extra_nectar.saturating_add(1) }
-                        (self.blue_hive_pollen,self.blue_hive_extra_nectar,&mut self.blue_hive_tipped,&mut self.blue_hive_tip_count)
+                        (self.blue_hive_pollen,self.blue_hive_extra_nectar)
                     }
                 };
+
+                // Keep scored pieces in the cell. They are rendered smaller than
+                // loose field pieces and arranged in fixed positions inside it.
+                let stored_index = pollen_count.saturating_add(nectar_count).saturating_sub(1) as usize;
+                let slot = [
+                    (-4.0_f32, -2.0_f32), (0.0, -2.0), (4.0, -2.0),
+                    (-4.0, 2.0), (0.0, 2.0), (4.0, 2.0),
+                    (-2.0, 4.5), (2.0, 4.5),
+                ][stored_index.min(7)];
+                let stored_radius = match projectile.kind {
+                    ElementKind::Pollen => 0.72,
+                    ElementKind::Nectar => 0.92,
+                };
+                self.field_pollen.push(Pollen {
+                    x: center.0 + slot.0,
+                    y: center.1 + slot.1,
+                    radius: stored_radius,
+                    from_flower: false,
+                    kind: projectile.kind,
+                    hive: Some(side),
+                    vx: 0.0,
+                    vy: 0.0,
+                });
+
                 let load=HIVE_STARTING_NECTAR as f32*HIVE_NECTAR_LOAD_UNITS+nectar_count as f32*HIVE_NECTAR_LOAD_UNITS+pollen_count as f32*HIVE_POLLEN_LOAD_UNITS;
                 self.pollen_projectile=None;
                 if load>=HIVE_TIP_LOAD_UNITS {
-                    *tipped=!*tipped;
-                    *tip_count+=1;
-                    for i in 0..pollen_count {
-                        let angle=i as f32*2.399_963;
-                        self.field_pollen.push(Pollen{x:center.0+angle.cos()*3.0,y:center.1+angle.sin()*3.0,radius:POLLEN_RADIUS_IN,from_flower:false,kind:ElementKind::Pollen,hive:None,vx:angle.cos()*1.5,vy:angle.sin()*1.5});
+                    match side {
+                        HiveSide::Red => {
+                            self.red_hive_tipped = !self.red_hive_tipped;
+                            self.red_hive_tip_count += 1;
+                            self.red_hive_pollen = 0;
+                            self.red_hive_extra_nectar = 0;
+                        }
+                        HiveSide::Blue => {
+                            self.blue_hive_tipped = !self.blue_hive_tipped;
+                            self.blue_hive_tip_count += 1;
+                            self.blue_hive_pollen = 0;
+                            self.blue_hive_extra_nectar = 0;
+                        }
                     }
-                    for i in 0..nectar_count {
-                        let angle=i as f32*2.399_963+0.8;
-                        self.field_pollen.push(Pollen{x:center.0+angle.cos()*4.0,y:center.1+angle.sin()*4.0,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,hive:None,vx:angle.cos()*1.2,vy:angle.sin()*1.2});
+                    // The opposite fixed cell becomes active and receives its
+                    // three starting Nectar only when it becomes untipped.
+                    let next_center = hive_pair_centers(side, match side {
+                        HiveSide::Red => self.red_hive_tipped,
+                        HiveSide::Blue => self.blue_hive_tipped,
+                    }).0;
+                    for (dx, dy) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
+                        self.field_pollen.push(Pollen {
+                            x: next_center.0 + dx,
+                            y: next_center.1 + dy,
+                            radius: NECTAR_RADIUS_IN,
+                            from_flower: false,
+                            kind: ElementKind::Nectar,
+                            hive: Some(side),
+                            vx: 0.0,
+                            vy: 0.0,
+                        });
                     }
-                    match side {HiveSide::Red=>{self.red_hive_pollen=0;self.red_hive_extra_nectar=0;},HiveSide::Blue=>{self.blue_hive_pollen=0;self.blue_hive_extra_nectar=0;}}
                     self.pollen_status=format!("{} hive tipped. Its opposite fixed cell is now untipped.",if side==HiveSide::Red{"Red"}else{"Blue"});
                 } else {
                     self.pollen_status=format!("{} hive: {:.1}/8.0 load units toward tipping.",if side==HiveSide::Red{"Red"}else{"Blue"},load);
@@ -995,14 +1040,15 @@ fn starting_field_pollen() -> Vec<Pollen> {
         pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
     }
 
-    // Both fixed cells in each alliance pair start with three Nectar.
+    // At match start, only the initially untipped cells contain their
+    // three starting Nectar: Red at (57,57), Blue at (81,81).
     for (offset_x, offset_y) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
-        for (center, side) in [(RED_HIVE_A,HiveSide::Red),(RED_HIVE_B,HiveSide::Red),(BLUE_HIVE_A,HiveSide::Blue),(BLUE_HIVE_B,HiveSide::Blue)] {
+        for (center, side) in [(RED_HIVE_A,HiveSide::Red),(BLUE_HIVE_A,HiveSide::Blue)] {
             pollen.push(Pollen{x:center.0+offset_x,y:center.1+offset_y,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,hive:Some(side),vx:0.0,vy:0.0});
         }
     }
 
-    // Nectar is staged only inside the two hives; no extra pieces spawn in the alliance areas.
+    // The opposite cells receive their starting Nectar only when they become untipped.
     pollen
 }
 
