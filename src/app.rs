@@ -55,6 +55,7 @@ pub struct VisualizerApp {
     shooter_velocity_scale: f32,
     shot_cooldown: f32,
     intake_cycle_timer: f32,
+    shot_sequence: u32,
 }
 
 impl Default for VisualizerApp {
@@ -87,6 +88,7 @@ impl Default for VisualizerApp {
             shooter_velocity_scale: 0.02,
             shot_cooldown: 0.0,
             intake_cycle_timer: 0.0,
+            shot_sequence: 0,
         }
     }
 }
@@ -277,18 +279,26 @@ impl VisualizerApp {
             self.pollen_status = "No positive setVelocity() target was resolved from the selected OpMode.".to_owned();
             return;
         }
-        if self.flywheel_velocity < target * 0.9 {
-            self.pollen_status = format!("Flywheel spinning up: {:.0}/{:.0} ticks/s.", self.flywheel_velocity, target);
+        let minimum_shot_velocity = (target * 0.25).max(100.0);
+        if self.flywheel_velocity < minimum_shot_velocity {
+            self.pollen_status = format!("Flywheel spinning up: {:.0}/{:.0} ticks/s (shots become available at {:.0}).", self.flywheel_velocity, target, minimum_shot_velocity);
             return;
         }
 
-        let speed = (target * self.shooter_velocity_scale).clamp(12.0, 100.0);
+        // Projectile speed follows the flywheel's actual speed, not its requested maximum.
+        let speed = (self.flywheel_velocity * self.shooter_velocity_scale).clamp(3.0, 100.0);
+        // A repeatable small spread makes shots look imperfect without adding random misses.
+        // Every shot still creates a projectile and lands somewhere on the field.
+        const SPREAD_DEGREES: [f32; 7] = [-2.2, 1.1, 2.0, -0.8, 0.4, -1.5, 1.6];
+        let spread = SPREAD_DEGREES[self.shot_sequence as usize % SPREAD_DEGREES.len()].to_radians();
+        self.shot_sequence = self.shot_sequence.wrapping_add(1);
+        let launch_heading = self.heading_deg.to_radians() + spread;
         let heading = self.heading_deg.to_radians();
         let launch_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 1.0);
         let launch_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 1.0);
         self.pollen_projectile = Some(PollenProjectile {
             x: launch_x, y: launch_y,
-            vx: heading.sin() * speed, vy: heading.cos() * speed,
+            vx: launch_heading.sin() * speed, vy: launch_heading.cos() * speed,
             elapsed: 0.0,
         });
         self.pollen_count -= 1;
@@ -568,8 +578,10 @@ impl VisualizerApp {
             intake.to_vec(), Color32::from_rgb(240, 177, 54),
             Stroke::new(1.0, Color32::WHITE),
         ));
+        // Keep the intake hardware visually distinct from loose yellow pollen.
         let nose = transform(0.0, 10.8);
-        painter.circle_filled(nose, (2.0 * scale).max(2.5), Color32::from_rgb(255, 225, 105));
+        painter.circle_filled(nose, (1.2 * scale).max(1.8), Color32::from_rgb(65, 205, 190));
+        painter.circle_stroke(nose, (1.2 * scale).max(1.8), Stroke::new(0.8, Color32::WHITE));
         painter.text(rect.left_top() + Vec2::new(7.0, 7.0), Align2::LEFT_TOP,
             "BIOBUZZ FIELD", FontId::proportional(12.0), Color32::LIGHT_GRAY);
         painter.text(rect.right_bottom() - Vec2::new(7.0, 7.0), Align2::RIGHT_BOTTOM,
