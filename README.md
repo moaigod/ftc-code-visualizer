@@ -7,11 +7,13 @@ A Rust desktop application for visualizing FTC robot code and testing robot moti
 - Native desktop window built with Rust and egui.
 - Uses the supplied BIOBUZZ top-down field screenshot as the field background.
 - 144 × 144 inch coordinate space.
-- Robot position, heading, and basic motion controls.
+- Robot position, heading, and basic motion controls. Heading uses a compass-style convention: 0° points toward the top of the field and increases clockwise.
 - Import an FTC Android Studio project and scan TeamCode Java/Kotlin source.
 - Detect and list classes annotated with `@TeleOp` or `@Autonomous`.
 - Open a read-only source preview for a detected OpMode.
 - Controller-driven TeleOp field movement using a connected gamepad.
+- Extract `telemetry.addData()` and `telemetry.addLine()` entries from the selected OpMode.
+- Display live simulator values for recognized position, heading, runtime, and gamepad expressions.
 
 ## Field image setup
 
@@ -37,7 +39,7 @@ Connect an Xbox-compatible gamepad before launching the app, then press **Start 
 - Left stick X: strafe
 - Right stick X: rotate
 
-This currently drives a generic mecanum-style robot model. It is a controller-based simulator input, not yet an execution of the selected OpMode's code. The next interpreter milestone will map supported gamepad expressions and motor-power logic from imported source onto the simulation.
+This currently drives a generic mecanum-style robot model. It is a controller-based simulator input, not yet an execution of the selected OpMode's code. The telemetry panel extracts single-line `telemetry.addData("caption", expression)` and `telemetry.addLine("message")` calls. It evaluates a small set of direct expressions for simulated X/Y position, heading, elapsed time, and gamepad axes; other expressions are shown as source text and marked as not evaluated. It does not execute arbitrary Java/Kotlin or FTC SDK calls.
 
 ## Run locally
 
