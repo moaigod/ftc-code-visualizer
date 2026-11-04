@@ -530,7 +530,6 @@ impl VisualizerApp {
         }
 
         let center = Pos2::new(field.left() + self.robot_x * scale, field.bottom() - self.robot_y * scale);
-        let half = ROBOT_SIZE_IN * scale / 2.0;
         let h = self.heading_deg.to_radians();
         // Local robot coordinates: +X is right, +Y is forward. Heading zero faces up-field.
         let transform = |x: f32, y: f32| -> Pos2 {
@@ -551,7 +550,7 @@ impl VisualizerApp {
         ].iter().map(|(x, y)| transform(*x, *y)).collect::<Vec<_>>();
         painter.add(egui::Shape::convex_polygon(
             chassis_outline, Color32::from_rgb(42, 53, 65),
-            Stroke::new(1.8, Color32::from_rgb(190, 211, 224)),
+            Stroke::new(1.8_f32, Color32::from_rgb(190, 211, 224)),
         ));
 
         // Four visible drive wheels along the chassis sides.
@@ -563,11 +562,11 @@ impl VisualizerApp {
                 ];
                 painter.add(egui::Shape::convex_polygon(
                     wheel.to_vec(), Color32::from_rgb(18, 22, 28),
-                    Stroke::new(1.0, Color32::from_rgb(125, 145, 160)),
+                    Stroke::new(1.0_f32, Color32::from_rgb(125, 145, 160)),
                 ));
                 painter.line_segment(
                     [transform(x - 0.7, y), transform(x + 0.7, y)],
-                    Stroke::new(1.0, Color32::from_rgb(90, 110, 125)),
+                    Stroke::new(1.0_f32, Color32::from_rgb(90, 110, 125)),
                 );
             }
         }
@@ -579,7 +578,7 @@ impl VisualizerApp {
         ];
         painter.add(egui::Shape::convex_polygon(
             deck.to_vec(), Color32::from_rgb(65, 88, 105),
-            Stroke::new(1.0, Color32::from_rgb(130, 165, 185)),
+            Stroke::new(1.0_f32, Color32::from_rgb(130, 165, 185)),
         ));
         // Center-mounted blue ball / mechanism marker.
         painter.circle_filled(center, 2.0 * scale, Color32::from_rgb(80, 145, 220));
@@ -591,7 +590,7 @@ impl VisualizerApp {
         ];
         painter.add(egui::Shape::convex_polygon(
             intake.to_vec(), Color32::from_rgb(240, 177, 54),
-            Stroke::new(1.0, Color32::WHITE),
+            Stroke::new(1.0_f32, Color32::WHITE),
         ));
         painter.text(rect.left_top() + Vec2::new(7.0, 7.0), Align2::LEFT_TOP,
             "BIOBUZZ FIELD", FontId::proportional(12.0), Color32::LIGHT_GRAY);
