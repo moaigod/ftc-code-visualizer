@@ -164,11 +164,11 @@ impl VisualizerApp {
         let half = ROBOT_SIZE_IN * scale / 2.0;
         let robot = Rect::from_center_size(center, Vec2::splat(half * 2.0));
         painter.rect_filled(robot, 2.0, Color32::from_rgb(230, 55, 165));
-        painter.rect_stroke(robot, 2.0, Stroke::new(1.5, Color32::WHITE), egui::StrokeKind::Inside);
+        painter.rect_stroke(robot, 2.0, Stroke::new(1.5_f32, Color32::WHITE), egui::StrokeKind::Inside);
         let h = self.heading_deg.to_radians();
         // Heading: 0 degrees points up-field; positive angles rotate clockwise.
         let nose = Pos2::new(center.x + h.sin() * half, center.y - h.cos() * half);
-        painter.line_segment([center, nose], Stroke::new(3.0, Color32::YELLOW));
+        painter.line_segment([center, nose], Stroke::new(3.0_f32, Color32::YELLOW));
         painter.circle_filled(nose, 3.5, Color32::YELLOW);
         painter.text(rect.left_top() + Vec2::new(7.0, 7.0), Align2::LEFT_TOP,
             "BIOBUZZ FIELD", FontId::proportional(12.0), Color32::LIGHT_GRAY);
@@ -250,7 +250,8 @@ impl eframe::App for VisualizerApp {
                     }
                 }
             }
-\n            ui.add_space(12.0); ui.separator(); ui.heading("Android Studio project");
+
+            ui.add_space(12.0); ui.separator(); ui.heading("Android Studio project");
             if ui.button("Import FTC project folder").clicked() { self.import_project(); }
             ui.label(&self.import_status);
             if let Some(name) = &self.project_name {
