@@ -48,6 +48,10 @@ pub struct VisualizerApp {
     drive_wheel_velocity: [f32; 4],
     previous_gamepad_buttons: Vec<String>,
     flower_intake_cooldown: f32,
+    intake_running: bool,
+    feeder_running: bool,
+    flywheel_velocity: f32,
+    flywheel_target_velocity: f32,
 }
 
 impl Default for VisualizerApp {
@@ -73,6 +77,10 @@ impl Default for VisualizerApp {
             drive_wheel_velocity: [0.0; 4],
             previous_gamepad_buttons: Vec::new(),
             flower_intake_cooldown: 0.0,
+            intake_running: false,
+            feeder_running: false,
+            flywheel_velocity: 0.0,
+            flywheel_target_velocity: 0.0,
         }
     }
 }
@@ -141,7 +149,7 @@ impl VisualizerApp {
             let buttons = [
                 (Button::South, "south"), (Button::East, "east"),
                 (Button::West, "west"), (Button::North, "north"),
-                (Button::LeftTrigger, "left_bumper"), (Button::RightTrigger, "right_bumper"),
+                (Button::LeftTrigger, "left_trigger"), (Button::RightTrigger, "right_trigger"),
                 (Button::DPadUp, "dpad_up"), (Button::DPadDown, "dpad_down"),
                 (Button::DPadLeft, "dpad_left"), (Button::DPadRight, "dpad_right"),
                 (Button::Start, "start"), (Button::Select, "back"),
@@ -168,7 +176,11 @@ impl VisualizerApp {
     fn run_gamepad_action(&mut self, button: &str, action: &str) {
         let normalized = action.to_ascii_lowercase();
         if normalized.contains("intake") {
+            self.intake_running = true;
             self.intake_pollen();
+        } else if normalized.contains("feeder") {
+            self.feeder_running = true;
+            self.pollen_status = "Feeder activated by the selected OpMode.".to_owned();
         } else if normalized.contains("outtake") || normalized.contains("shooter") {
             let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i)).map(|m| m.source.as_str()).unwrap_or("");
             let program = crate::ftc_interpreter::interpret(source);
@@ -177,8 +189,12 @@ impl VisualizerApp {
                 .filter_map(|command| command.value)
                 .filter(|value| *value > 0.0)
                 .max_by(f32::total_cmp);
-            self.pollen_status = target.map(|value| format!("{} button selected outtake target: {:.0} ticks/s. Flywheel sequencing and prerequisites are not simulated yet.", button, value))
-                .unwrap_or_else(|| format!("{} button has no resolvable positive outtake setVelocity() command.", button));
+            if let Some(value) = target {
+                self.flywheel_target_velocity = value;
+                self.pollen_status = format!("{} selected flywheel target: {:.0} ticks/s.", button, value);
+            } else {
+                self.pollen_status = format!("{} button has no resolvable positive outtake setVelocity() command.", button);
+            }
         } else {
             self.pollen_status = format!(
                 "Detected button action: {action}. This command is not yet simulated."
@@ -229,6 +245,22 @@ impl VisualizerApp {
     }
 
     fn shoot_pollen(&mut self) {
+        let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i)).map(|m| m.source.as_str()).unwrap_or("");
+        let program = crate::ftc_interpreter::interpret(source);
+        let has_intake = program.motors.iter().any(|m| matches!(&m.role, crate::ftc_interpreter::MotorRole::Intake));
+        let has_feeder = program.motors.iter().any(|m| matches!(&m.role, crate::ftc_interpreter::MotorRole::Feeder));
+        if has_intake && !self.intake_running {
+            self.pollen_status = "Shot blocked: this OpMode has an intake motor, but its intake command is not active.".to_owned();
+            return;
+        }
+        if has_feeder && !self.feeder_running {
+            self.pollen_status = "Shot blocked: this OpMode has a feeder motor, but its feeder command is not active.".to_owned();
+            return;
+        }
+        if self.flywheel_target_velocity > 0.0 && self.flywheel_velocity < self.flywheel_target_velocity * 0.9 {
+            self.pollen_status = format!("Flywheel is still spinning up: {:.0}/{:.0} ticks/s.", self.flywheel_velocity, self.flywheel_target_velocity);
+            return;
+        }
         if self.pollen_count == 0 {
             self.pollen_status = "No pollen onboard to shoot.".to_owned();
             return;
@@ -361,6 +393,7 @@ impl VisualizerApp {
         let dt = (now - self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
         self.flower_intake_cooldown = (self.flower_intake_cooldown - dt).max(0.0);
+        self.flywheel_velocity = approach(self.flywheel_velocity, self.flywheel_target_velocity, 5000.0 * dt);
         self.update_pollen(dt);
         if self.pollen_projectile.is_some() || self.flower_intake_cooldown > 0.0 {
             ctx.request_repaint();
@@ -551,12 +584,14 @@ impl eframe::App for VisualizerApp {
         if keyboard_shoot { self.shoot_pollen(); }
 
         let pressed_buttons = if self.teleop_active { self.poll_controller() } else { Vec::new() };
+        let actions = self.detected_gamepad_actions();
+        self.intake_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("intake")));
+        self.feeder_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("feeder")));
         let newly_pressed = pressed_buttons.iter()
             .filter(|button| !self.previous_gamepad_buttons.contains(button))
             .cloned()
             .collect::<Vec<_>>();
         self.previous_gamepad_buttons = pressed_buttons;
-        let actions = self.detected_gamepad_actions();
         for button in newly_pressed {
             if let Some((_, action)) = actions.iter().find(|(mapped, _)| mapped == &button) {
                 self.run_gamepad_action(&button, action);
@@ -610,6 +645,8 @@ impl eframe::App for VisualizerApp {
             ui.separator();
             ui.heading("Pollen");
             ui.strong(format!("Carrying: {}/4", self.pollen_count));
+            ui.label(format!("Flywheel: {:.0}/{:.0} ticks/s", self.flywheel_velocity, self.flywheel_target_velocity));
+            ui.label(format!("Intake: {} · Feeder: {}", if self.intake_running { "active" } else { "off" }, if self.feeder_running { "active" } else { "off" }));
             ui.label(&self.pollen_status);
             if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
                 let outtakes = find_outtake_commands(&mode.source);
