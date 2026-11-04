@@ -18,11 +18,14 @@ const HIVE_NECTAR_LOAD_UNITS: f32 = 1.6;
 const HIVE_POLLEN_LOAD_UNITS: f32 = 1.0;
 const HIVE_RED_CENTER: (f32, f32) = (57.0, 57.0);
 const HIVE_BLUE_CENTER: (f32, f32) = (84.0, 84.0);
-const HIVE_CELL_HALF_WIDTH_IN: f32 = 10.0;
-const HIVE_CELL_HALF_DEPTH_IN: f32 = 7.0;
+const HIVE_CELL_HALF_WIDTH_IN: f32 = 11.0;
+const HIVE_CELL_HALF_DEPTH_IN: f32 = 11.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ElementKind { Pollen, Nectar }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HiveSide { Red, Blue }
 
 #[derive(Clone, Copy, Debug)]
 struct Pollen {
@@ -31,6 +34,7 @@ struct Pollen {
     radius: f32,
     from_flower: bool,
     kind: ElementKind,
+    hive: Option<HiveSide>,
     vx: f32,
     vy: f32,
 }
@@ -361,8 +365,8 @@ impl VisualizerApp {
             // Invisible hive perimeter walls affect scoring elements only.
             // They keep the starting Nectar inside each untipped hive while
             // still allowing the robot to drive across the same area.
-            constrain_element_to_hive(pollen, HIVE_RED_CENTER, self.red_hive_tipped);
-            constrain_element_to_hive(pollen, HIVE_BLUE_CENTER, self.blue_hive_tipped);
+            collide_element_with_hive(pollen, HIVE_RED_CENTER, HiveSide::Red, self.red_hive_tipped);
+            collide_element_with_hive(pollen, HIVE_BLUE_CENTER, HiveSide::Blue, self.blue_hive_tipped);
         }
 
         // Resolve overlaps between loose pollen pieces with a soft, damped bounce.
@@ -788,33 +792,67 @@ fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> 
     }).collect()
 }
 
-fn constrain_element_to_hive(element: &mut Pollen, center: (f32, f32), tipped: bool) {
-    if tipped {
+fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: HiveSide, tipped: bool) {
+    if tipped { return; }
+
+    let half = HIVE_CELL_HALF_WIDTH_IN;
+    let min_x = center.0 - half;
+    let max_x = center.0 + half;
+    let min_y = center.1 - half;
+    let max_y = center.1 + half;
+
+    if element.hive == Some(side) {
+        // The three preloaded Nectar pieces remain physically loose inside
+        // their own hive until it tips.
+        let min_x = min_x + element.radius;
+        let max_x = max_x - element.radius;
+        let min_y = min_y + element.radius;
+        let max_y = max_y - element.radius;
+        if element.x < min_x { element.x = min_x; element.vx = element.vx.abs() * 0.35; }
+        else if element.x > max_x { element.x = max_x; element.vx = -element.vx.abs() * 0.35; }
+        if element.y < min_y { element.y = min_y; element.vy = element.vy.abs() * 0.35; }
+        else if element.y > max_y { element.y = max_y; element.vy = -element.vy.abs() * 0.35; }
         return;
     }
 
-    // Treat the hive as a small rectangular enclosure. The radius inset keeps
-    // the entire scoring element inside rather than letting its center cross
-    // the invisible wall.
-    let min_x = center.0 - HIVE_CELL_HALF_WIDTH_IN + element.radius;
-    let max_x = center.0 + HIVE_CELL_HALF_WIDTH_IN - element.radius;
-    let min_y = center.1 - HIVE_CELL_HALF_DEPTH_IN + element.radius;
-    let max_y = center.1 + HIVE_CELL_HALF_DEPTH_IN - element.radius;
-
-    if element.x < min_x {
-        element.x = min_x;
-        element.vx = element.vx.abs() * 0.35;
-    } else if element.x > max_x {
-        element.x = max_x;
-        element.vx = -element.vx.abs() * 0.35;
-    }
-
-    if element.y < min_y {
-        element.y = min_y;
-        element.vy = element.vy.abs() * 0.35;
-    } else if element.y > max_y {
-        element.y = max_y;
-        element.vy = -element.vy.abs() * 0.35;
+    // All other loose scoring elements collide with the outside of the
+    // invisible 22 x 22 inch hive perimeter. The robot does not collide.
+    let closest_x = element.x.clamp(min_x, max_x);
+    let closest_y = element.y.clamp(min_y, max_y);
+    let dx = element.x - closest_x;
+    let dy = element.y - closest_y;
+    let distance = dx.hypot(dy);
+    if distance < element.radius {
+        if distance > 0.001 {
+            let nx = dx / distance;
+            let ny = dy / distance;
+            let overlap = element.radius - distance;
+            element.x += nx * overlap;
+            element.y += ny * overlap;
+            let into_wall = element.vx * nx + element.vy * ny;
+            if into_wall < 0.0 {
+                element.vx -= 1.35 * into_wall * nx;
+                element.vy -= 1.35 * into_wall * ny;
+            }
+        } else {
+            // Center landed inside the rectangle: push it through the
+            // nearest face so it cannot become trapped inside the wall.
+            let distances = [
+                (element.x - min_x, -1.0_f32, 0.0_f32),
+                (max_x - element.x, 1.0, 0.0),
+                (element.y - min_y, 0.0, -1.0),
+                (max_y - element.y, 0.0, 1.0),
+            ];
+            let (depth, nx, ny) = distances.into_iter().min_by(|a,b| a.0.total_cmp(&b.0)).unwrap();
+            let push = depth + element.radius;
+            element.x += nx * push;
+            element.y += ny * push;
+            let into_wall = element.vx * nx + element.vy * ny;
+            if into_wall < 0.0 {
+                element.vx -= 1.35 * into_wall * nx;
+                element.vy -= 1.35 * into_wall * ny;
+            }
+        }
     }
 }
 
@@ -833,7 +871,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
     ];
     for (x, y) in flower_positions {
         for radius in flower_radii {
-            pollen.push(Pollen { x, y, radius, from_flower: true, kind: ElementKind::Pollen, vx: 0.0, vy: 0.0 });
+            pollen.push(Pollen { x, y, radius, from_flower: true, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
         }
     }
 
@@ -849,12 +887,12 @@ fn starting_field_pollen() -> Vec<Pollen> {
         pollen.push(Pollen {
             x: HIVE_RED_CENTER.0 + offset_x, y: HIVE_RED_CENTER.1 + offset_y,
             radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar,
-            vx: 0.0, vy: 0.0,
+            hive: Some(HiveSide::Red), vx: 0.0, vy: 0.0,
         });
         pollen.push(Pollen {
             x: HIVE_BLUE_CENTER.0 + offset_x, y: HIVE_BLUE_CENTER.1 + offset_y,
             radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar,
-            vx: 0.0, vy: 0.0,
+            hive: Some(HiveSide::Blue), vx: 0.0, vy: 0.0,
         });
     }
 
@@ -863,7 +901,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
         let offset = i as f32 * 5.0;
         pollen.push(Pollen {
             x: 18.0 + offset, y: 18.0, radius: NECTAR_RADIUS_IN,
-            from_flower: false, kind: ElementKind::Nectar, vx: 0.0, vy: 0.0,
+            from_flower: false, kind: ElementKind::Nectar, hive: None, vx: 0.0, vy: 0.0,
         });
         pollen.push(Pollen {
             x: FIELD_SIZE_IN - 18.0 - offset, y: FIELD_SIZE_IN - 18.0,
