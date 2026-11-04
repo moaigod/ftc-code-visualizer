@@ -73,6 +73,8 @@ pub struct VisualizerApp {
     shot_sequence: u32,
     red_hive_pollen: u8,
     blue_hive_pollen: u8,
+    red_hive_extra_nectar: u8,
+    blue_hive_extra_nectar: u8,
     red_hive_tipped: bool,
     blue_hive_tipped: bool,
 }
@@ -110,6 +112,8 @@ impl Default for VisualizerApp {
             shot_sequence: 0,
             red_hive_pollen: 0,
             blue_hive_pollen: 0,
+            red_hive_extra_nectar: 0,
+            blue_hive_extra_nectar: 0,
             red_hive_tipped: false,
             blue_hive_tipped: false,
         }
@@ -445,26 +449,36 @@ impl VisualizerApp {
             let in_blue_cell = (projectile.x - HIVE_BLUE_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
                 && (projectile.y - HIVE_BLUE_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
             if in_red_cell && !self.red_hive_tipped {
-                self.red_hive_pollen = self.red_hive_pollen.saturating_add(1);
+                match projectile.kind {
+                    ElementKind::Pollen => self.red_hive_pollen = self.red_hive_pollen.saturating_add(1),
+                    ElementKind::Nectar => self.red_hive_extra_nectar = self.red_hive_extra_nectar.saturating_add(1),
+                }
                 self.pollen_projectile = None;
-                if (HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
-                    + self.red_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS) >= HIVE_TIP_LOAD_UNITS {
+                let load = HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
+                    + self.red_hive_extra_nectar as f32 * HIVE_NECTAR_LOAD_UNITS
+                    + self.red_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS;
+                if load >= HIVE_TIP_LOAD_UNITS {
                     self.red_hive_tipped = true;
-                    self.pollen_status = format!("Red hive tipped! {} starting NECTAR + {} POLLEN.", HIVE_STARTING_NECTAR, self.red_hive_pollen);
+                    self.pollen_status = format!("Red hive tipped at {:.1} load units.", load);
                 } else {
-                    self.pollen_status = format!("Red hive: {:.1}/{:.1} load units ({} starting NECTAR, {} POLLEN).", HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS + self.red_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS, HIVE_TIP_LOAD_UNITS, HIVE_STARTING_NECTAR, self.red_hive_pollen);
+                    self.pollen_status = format!("Red hive: {:.1}/{:.1} load units.", load, HIVE_TIP_LOAD_UNITS);
                 }
                 return;
             }
             if in_blue_cell && !self.blue_hive_tipped {
-                self.blue_hive_pollen = self.blue_hive_pollen.saturating_add(1);
+                match projectile.kind {
+                    ElementKind::Pollen => self.blue_hive_pollen = self.blue_hive_pollen.saturating_add(1),
+                    ElementKind::Nectar => self.blue_hive_extra_nectar = self.blue_hive_extra_nectar.saturating_add(1),
+                }
                 self.pollen_projectile = None;
-                if (HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
-                    + self.blue_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS) >= HIVE_TIP_LOAD_UNITS {
+                let load = HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
+                    + self.blue_hive_extra_nectar as f32 * HIVE_NECTAR_LOAD_UNITS
+                    + self.blue_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS;
+                if load >= HIVE_TIP_LOAD_UNITS {
                     self.blue_hive_tipped = true;
-                    self.pollen_status = format!("Blue hive tipped! {} starting NECTAR + {} POLLEN.", HIVE_STARTING_NECTAR, self.blue_hive_pollen);
+                    self.pollen_status = format!("Blue hive tipped at {:.1} load units.", load);
                 } else {
-                    self.pollen_status = format!("Blue hive: {:.1}/{:.1} load units ({} starting NECTAR, {} POLLEN).", HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS + self.blue_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS, HIVE_TIP_LOAD_UNITS, HIVE_STARTING_NECTAR, self.blue_hive_pollen);
+                    self.pollen_status = format!("Blue hive: {:.1}/{:.1} load units.", load, HIVE_TIP_LOAD_UNITS);
                 }
                 return;
             }
@@ -478,7 +492,7 @@ impl VisualizerApp {
                 let landed = Pollen {
                     x: projectile.x.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
                     y: projectile.y.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
-                    radius: POLLEN_RADIUS_IN,
+                    radius: match projectile.kind { ElementKind::Pollen => POLLEN_RADIUS_IN, ElementKind::Nectar => NECTAR_RADIUS_IN },
                     from_flower: false,
                     kind: projectile.kind,
                     vx: projectile.vx * 0.18,
