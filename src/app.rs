@@ -17,6 +17,7 @@ pub struct VisualizerApp {
     selected_op_mode: Option<usize>, show_source: bool, import_status: String,
     gamepad: Option<Gilrs>, controller_status: String,
     stick_forward: f32, stick_strafe: f32, stick_turn: f32,
+    forward_velocity: f32, strafe_velocity: f32, turn_velocity: f32,
 }
 
 impl Default for VisualizerApp {
@@ -33,6 +34,7 @@ impl Default for VisualizerApp {
             op_modes: Vec::new(), selected_op_mode: None, show_source: false,
             import_status: "No FTC project loaded.".to_owned(),
             gamepad, controller_status, stick_forward: 0.0, stick_strafe: 0.0, stick_turn: 0.0,
+            forward_velocity: 0.0, strafe_velocity: 0.0, turn_velocity: 0.0,
         }
     }
 }
@@ -41,6 +43,7 @@ impl VisualizerApp {
     fn reset(&mut self) {
         self.robot_x = 24.0; self.robot_y = 24.0; self.heading_deg = 0.0;
         self.elapsed_seconds = 0.0; self.is_running = false; self.teleop_active = false;
+        self.forward_velocity = 0.0; self.strafe_velocity = 0.0; self.turn_velocity = 0.0;
         self.last_frame = Instant::now();
     }
 
@@ -121,16 +124,33 @@ impl VisualizerApp {
 
         if self.teleop_active {
             self.poll_controller();
+
+            // Mecanum inverse kinematics: mix chassis commands into four wheel powers.
+            let f = self.stick_forward;
+            let s = self.stick_strafe;
+            let r = self.stick_turn;
+            let mut wheels = [f + s + r, f - s - r, f - s + r, f + s - r];
+            let largest = wheels.iter().fold(1.0_f32, |m, p| m.max(p.abs()));
+            for power in &mut wheels { *power /= largest; }
+
+            // Convert wheel powers back into robot-relative forward, strafe and turn.
+            let target_forward = (wheels[0] + wheels[1] + wheels[2] + wheels[3]) * 0.25;
+            let target_strafe = (wheels[0] - wheels[1] - wheels[2] + wheels[3]) * 0.25;
+            let target_turn = (wheels[0] - wheels[1] + wheels[2] - wheels[3]) * 0.25;
+
+            // Acceleration-limited motor response.
+            self.forward_velocity = approach(self.forward_velocity, target_forward * MAX_SPEED_IN_S, 72.0 * dt);
+            self.strafe_velocity = approach(self.strafe_velocity, target_strafe * MAX_SPEED_IN_S, 72.0 * dt);
+            self.turn_velocity = approach(self.turn_velocity, target_turn * MAX_TURN_DEG_S, 360.0 * dt);
+
             let heading = self.heading_deg.to_radians();
-            let forward = self.stick_forward * MAX_SPEED_IN_S;
-            let strafe = self.stick_strafe * MAX_SPEED_IN_S;
-            let field_dx = strafe * heading.cos() + forward * heading.sin();
-            let field_dy = -strafe * heading.sin() + forward * heading.cos();
+            let field_dx = self.strafe_velocity * heading.cos() + self.forward_velocity * heading.sin();
+            let field_dy = -self.strafe_velocity * heading.sin() + self.forward_velocity * heading.cos();
             self.robot_x = (self.robot_x + field_dx * dt)
                 .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
             self.robot_y = (self.robot_y + field_dy * dt)
                 .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
-            self.heading_deg = (self.heading_deg + self.stick_turn * MAX_TURN_DEG_S * dt).rem_euclid(360.0);
+            self.heading_deg = (self.heading_deg + self.turn_velocity * dt).rem_euclid(360.0);
             self.elapsed_seconds += dt;
             ctx.request_repaint();
         } else if self.is_running {
@@ -181,6 +201,10 @@ fn deadzone(value: f32) -> f32 {
     if value.abs() < 0.12 { 0.0 } else { value }
 }
 
+fn approach(current: f32, target: f32, max_delta: f32) -> f32 {
+    current + (target - current).clamp(-max_delta, max_delta)
+}
+
 impl eframe::App for VisualizerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.load_field_image(ctx);
@@ -194,6 +218,10 @@ impl eframe::App for VisualizerApp {
             });
         });
         egui::SidePanel::left("controls").resizable(true).default_width(320.0).show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("sidebar_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
             ui.heading("Robot"); ui.add_space(8.0); ui.label("Position (inches)");
             ui.add(egui::Slider::new(&mut self.robot_x, 0.0..=FIELD_SIZE_IN).text("X"));
             ui.add(egui::Slider::new(&mut self.robot_y, 0.0..=FIELD_SIZE_IN).text("Y"));
@@ -208,8 +236,9 @@ impl eframe::App for VisualizerApp {
             });
             ui.add_space(12.0); ui.separator(); ui.heading("TeleOp controller");
             ui.label(&self.controller_status);
-            ui.label("Left stick: forward / strafe");
+            ui.label("Left stick: robot-relative forward / strafe");
             ui.label("Right stick X: rotate");
+            ui.label("Mecanum wheel mixing with normalized wheel power and acceleration.");
             if ui.button(if self.teleop_active { "Stop TeleOp" } else { "Start TeleOp" }).clicked() {
                 self.teleop_active = !self.teleop_active;
                 self.is_running = false;
@@ -268,6 +297,7 @@ impl eframe::App for VisualizerApp {
             }
             ui.add_space(12.0); ui.separator(); ui.heading("Field status");
             ui.label("144 × 144 inches"); ui.label("Background: supplied field screenshot");
+                });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| self.draw_field(ui));
