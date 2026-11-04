@@ -158,6 +158,26 @@ impl VisualizerApp {
         }
     }
 
+    fn detected_gamepad_actions(&self) -> Vec<(String, String)> {
+        let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) else {
+            return Vec::new();
+        };
+        find_gamepad_actions(&mode.source)
+    }
+
+    fn run_gamepad_action(&mut self, action: &str) {
+        let normalized = action.to_ascii_lowercase();
+        if normalized.contains("intake") {
+            self.intake_pollen();
+        } else if normalized.contains("outtake") || normalized.contains("shooter") {
+            self.shoot_pollen();
+        } else {
+            self.pollen_status = format!(
+                "Detected button action: {action}. This command is not yet simulated."
+            );
+        }
+    }
+
     fn detected_shooter_command(&self) -> Option<(String, String)> {
         let name = self.motor_names[4].trim();
         if name.is_empty() { return None; }
