@@ -477,21 +477,6 @@ fn find_gamepad_actions(source: &str) -> Vec<(String, String)> {
     crate::ftc_interpreter::interpret(source).button_actions
 }
 
-fn find_defined_motors(source: &str) -> Vec<(String, String)> {
-    crate::ftc_interpreter::interpret(source).motors.into_iter()
-        .map(|motor| (motor.variable, motor.hardware_name)).collect()
-}
-
-fn find_motor_commands(source: &str, motor_name: &str) -> Vec<(String, String)> {
-    crate::ftc_interpreter::interpret(source).commands.into_iter()
-        .filter(|command| command.motor == motor_name)
-        .map(|command| (command.method, command.expression)).collect()
-}
-
-fn find_motor_command(source: &str, motor_name: &str) -> Option<(String, String)> {
-    find_motor_commands(source, motor_name).into_iter().next()
-}
-
 fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> {
     let program = crate::ftc_interpreter::interpret(source);
     let motors = program.motors.clone();
