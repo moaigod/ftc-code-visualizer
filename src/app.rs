@@ -9,7 +9,6 @@ const MAX_SPEED_IN_S: f32 = 48.0;
 const MAX_TURN_DEG_S: f32 = 180.0;
 const MAX_POLLEN: u8 = 4;
 const POLLEN_RADIUS_IN: f32 = 1.4;
-const INTAKE_RANGE_IN: f32 = 10.0;
 const SHOT_FLIGHT_SECONDS: f32 = 0.72;
 const FLOWER_INTAKE_COOLDOWN_SECONDS: f32 = 0.5;
 
@@ -229,12 +228,27 @@ impl VisualizerApp {
             return;
         }
 
+        // Test pollen against the actual orange intake rectangle in robot-local
+        // coordinates. Pollen must physically overlap the rectangle; proximity
+        // elsewhere near the robot is not enough.
         let heading = self.heading_deg.to_radians();
-        let intake_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 2.0);
-        let intake_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 2.0);
+        let right = (heading.cos(), heading.sin());
+        let forward = (heading.sin(), heading.cos());
+        let half_width = 5.8_f32;
+        let intake_front = 9.8_f32;
+        let intake_back = 8.0_f32;
+
         let nearest = self.field_pollen.iter().enumerate()
-            .map(|(i, pollen)| (i, (pollen.x - intake_x).hypot(pollen.y - intake_y)))
-            .filter(|(_, distance)| *distance <= INTAKE_RANGE_IN)
+            .filter_map(|(i, pollen)| {
+                let dx = pollen.x - self.robot_x;
+                let dy = pollen.y - self.robot_y;
+                let local_x = dx * right.0 + dy * right.1;
+                let local_y = dx * forward.0 + dy * forward.1;
+                let closest_x = local_x.clamp(-half_width, half_width);
+                let closest_y = local_y.clamp(intake_back, intake_front);
+                let distance = (local_x - closest_x).hypot(local_y - closest_y);
+                (distance <= pollen.radius).then_some((i, distance))
+            })
             .min_by(|a, b| a.1.total_cmp(&b.1));
 
         if let Some((index, _)) = nearest {
@@ -250,7 +264,7 @@ impl VisualizerApp {
             }
             self.pollen_status = format!("Pollen collected: {}/4 onboard.", self.pollen_count);
         } else {
-            self.pollen_status = "No pollen close enough to the intake.".to_owned();
+            self.pollen_status = "No pollen is touching the intake.".to_owned();
         }
     }
 
@@ -567,7 +581,6 @@ impl VisualizerApp {
             deck.to_vec(), Color32::from_rgb(65, 88, 105),
             Stroke::new(1.0, Color32::from_rgb(130, 165, 185)),
         ));
-        painter.circle_filled(center, 2.0 * scale, Color32::from_rgb(80, 205, 190));
 
         // Front intake bar makes the robot's forward direction immediately visible.
         let intake = [
