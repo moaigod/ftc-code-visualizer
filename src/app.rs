@@ -674,8 +674,8 @@ impl eframe::App for VisualizerApp {
                         ui.label("No supported hardwareMap motor declarations found.");
                     }
                     for motor in &program.motors {
-                        let role = match motor.role {
-                            crate::ftc_interpreter::MotorRole::Drive(index) => ["Front left", "Front right", "Back left", "Back right"][index],
+                        let role = match &motor.role {
+                            crate::ftc_interpreter::MotorRole::Drive(index) => ["Front left", "Front right", "Back left", "Back right"][*index],
                             crate::ftc_interpreter::MotorRole::Intake => "Intake",
                             crate::ftc_interpreter::MotorRole::Feeder => "Feeder",
                             crate::ftc_interpreter::MotorRole::Outtake => "Outtake",
