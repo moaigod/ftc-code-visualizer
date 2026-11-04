@@ -1,0 +1,9 @@
+[package]
+name = "ftc-code-visualizer"
+version = "0.1.0"
+edition = "2024"
+description = "A desktop field visualizer and simulator for FIRST Tech Challenge robots"
+license = "MIT"
+
+[dependencies]
+eframe = "0.31.1"
