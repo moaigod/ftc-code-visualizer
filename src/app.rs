@@ -1,4 +1,3 @@
-use std::f32::consts::TAU;
 use std::time::Instant;
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
@@ -248,7 +247,5 @@ impl eframe::App for VisualizerApp {
                 self.draw_field(ui);
             });
         });
-
-        let _ = TAU;
     }
 }
