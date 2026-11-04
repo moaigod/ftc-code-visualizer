@@ -272,7 +272,9 @@ impl VisualizerApp {
         let h = self.heading_deg.to_radians();
         let nearest = self.field_pollen.iter().enumerate().filter_map(|(i, e)| {
             let dx=e.x-self.robot_x; let dy=e.y-self.robot_y;
-            let lx=dx*h.cos()+dy*h.sin(); let ly=dx*h.sin()+dy*h.cos();
+            // Inverse of the field transform used to draw the robot:
+            // local +Y points toward the front of the chassis.
+            let lx=dx*h.cos()+dy*h.sin(); let ly=dx*h.sin()-dy*h.cos();
             let cx=lx.clamp(-5.8,5.8); let cy=ly.clamp(8.0,9.8);
             let d=(lx-cx).hypot(ly-cy);
             (d<=e.radius).then_some((i,d))
@@ -353,8 +355,8 @@ impl VisualizerApp {
 
             let dx = pollen.x - self.robot_x;
             let dy = pollen.y - self.robot_y;
-            let local_x = dx * heading.cos() - dy * heading.sin();
-            let local_y = dx * heading.sin() + dy * heading.cos();
+            let local_x = dx * heading.cos() + dy * heading.sin();
+            let local_y = dx * heading.sin() - dy * heading.cos();
             let closest_x = local_x.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
             let closest_y = local_y.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
             let away_x = local_x - closest_x;
@@ -369,7 +371,7 @@ impl VisualizerApp {
                     (0.0, local_y.signum().copysign(1.0))
                 };
                 let nx = local_nx * heading.cos() + local_ny * heading.sin();
-                let ny = -local_nx * heading.sin() + local_ny * heading.cos();
+                let ny = local_nx * heading.sin() - local_ny * heading.cos();
                 let overlap = pollen.radius - distance;
                 pollen.x += nx * overlap;
                 pollen.y += ny * overlap;
@@ -888,7 +890,7 @@ fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: Hiv
     }
 
     // All other loose scoring elements collide with the outside of the
-    // invisible 22 x 22 inch hive perimeter. The robot does not collide.
+    // invisible 22 x 14 inch hive perimeter. The robot does not collide.
     let closest_x = element.x.clamp(min_x, max_x);
     let closest_y = element.y.clamp(min_y, max_y);
     let dx = element.x - closest_x;
