@@ -11,7 +11,8 @@ A Rust desktop application for visualizing FTC robot code and testing robot moti
 - Import an FTC Android Studio project and scan TeamCode Java/Kotlin source.
 - Detect and list classes annotated with `@TeleOp` or `@Autonomous`.
 - Open a read-only source preview for a detected OpMode.
-- Controller-driven TeleOp field movement using a connected gamepad.
+- Controller-driven generic mecanum-style TeleOp movement using a connected gamepad.
+- Basic source extraction for telemetry display (not full telemetry execution).
 - Extract `telemetry.addData()` and `telemetry.addLine()` entries from the selected OpMode.
 - Display live simulator values for recognized position, heading, runtime, and gamepad expressions.
 
@@ -39,7 +40,7 @@ Connect an Xbox-compatible gamepad before launching the app, then press **Start 
 - Left stick X: strafe
 - Right stick X: rotate
 
-This currently drives a generic mecanum-style robot model. It is a controller-based simulator input, not yet an execution of the selected OpMode's code. The telemetry panel extracts single-line `telemetry.addData("caption", expression)` and `telemetry.addLine("message")` calls. It evaluates a small set of direct expressions for simulated X/Y position, heading, elapsed time, and gamepad axes; other expressions are shown as source text and marked as not evaluated. It does not execute arbitrary Java/Kotlin or FTC SDK calls.
+This currently drives a generic mecanum-style robot model. It is a controller-based simulator input, not yet an execution of the selected OpMode's code. The telemetry panel extracts simple, single-line `telemetry.addData("caption", expression)` and `telemetry.addLine("message")` calls. It only substitutes a small set of recognized simulator values; it does not execute the expressions or arbitrary FTC SDK code. Autonomous OpModes are detected and can be previewed, but cannot currently be run.
 
 ## Run locally
 
@@ -55,7 +56,8 @@ cargo run
 2. Interpret common gamepad-to-motor logic from TeleOp source.
 3. Add autonomous command and sequence interpretation.
 4. Add PedroPathing 3 path extraction and rendering.
-5. Add a separate live telemetry bridge.
+5. Implement autonomous execution for supported OpMode patterns.
+6. Add a separate live telemetry bridge.
 
 ## Important limitation
 
