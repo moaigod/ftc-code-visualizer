@@ -283,9 +283,15 @@ impl VisualizerApp {
             let lx=dx*h.cos()+dy*h.sin(); let ly=dx*h.sin()-dy*h.cos();
             // Slightly wider/deeper trigger zone than the rendered intake bar:
             // any scoring element physically touching the front intake is eligible.
-            let cx=lx.clamp(-7.0,7.0); let cy=ly.clamp(7.5,11.0);
+            // World +Y is up-field, matching the robot drawing transform.
+            // The old subtraction inverted forward detection, so the intake
+            // only worked reliably when the robot was turned sideways.
+            let ly=dx*h.sin()+dy*h.cos();
+            // Give the intake a forgiving capture envelope around its front bar.
+            let cx=lx.clamp(-8.5,8.5);
+            let cy=ly.clamp(6.5,12.5);
             let d=(lx-cx).hypot(ly-cy);
-            (d<=e.radius).then_some((i,d))
+            (d<=e.radius+1.5).then_some((i,d))
         }).min_by(|a,b| a.1.total_cmp(&b.1));
         if let Some((i,_))=nearest {
             let e=self.field_pollen[i];
@@ -552,10 +558,12 @@ impl VisualizerApp {
                     }
                     // The opposite fixed cell becomes active and receives its
                     // three starting Nectar only when it becomes untipped.
-                    let next_center = hive_pair_centers(side, match side {
-                        HiveSide::Red => self.red_hive_tipped,
-                        HiveSide::Blue => self.blue_hive_tipped,
-                    }).0;
+                    let next_center = match side {
+                        HiveSide::Red => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
+                        HiveSide::Blue => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
+                    };
+                    // Refill only the cell that has just changed from tipped
+                    // to untipped. These are new, full-size starting Nectar.
                     for (dx, dy) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
                         self.field_pollen.push(Pollen {
                             x: next_center.0 + dx,
@@ -759,27 +767,8 @@ impl VisualizerApp {
         }
         let scale = field.width() / FIELD_SIZE_IN;
 
-        // Show the scoring pieces that have entered each hive. They are stored
-        // as load counters, so render small markers rather than deleting them visually.
-        for (center, pollen_count, nectar_count, color) in [
-            (hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0, self.red_hive_pollen, self.red_hive_extra_nectar, Color32::from_rgb(235, 55, 65)),
-            (hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0, self.blue_hive_pollen, self.blue_hive_extra_nectar, Color32::from_rgb(55, 125, 245)),
-        ] {
-            let total = pollen_count as usize + nectar_count as usize;
-            for i in 0..total {
-                let col = (i % 5) as f32;
-                let row = (i / 5) as f32;
-                let p = Pos2::new(
-                    field.left() + (center.0 - 6.0 + col * 3.0) * scale,
-                    field.bottom() - (center.1 + 3.0 - row * 3.0) * scale,
-                );
-                let is_nectar = i >= pollen_count as usize;
-                let radius = if is_nectar { 1.25 } else { 0.9 };
-                let marker_color = if is_nectar { color } else { Color32::from_rgb(255, 218, 35) };
-                painter.circle_filled(p, radius * scale, marker_color);
-                painter.circle_stroke(p, radius * scale, Stroke::new(0.6, Color32::WHITE));
-            }
-        }
+        // Scored elements are retained in field_pollen at their reduced
+        // radius, so the normal element renderer below shows their true size.
 
         // Draw smaller pollen first so larger pieces are layered over them.
         let mut pollen_draw_order = self.field_pollen.iter().collect::<Vec<_>>();
