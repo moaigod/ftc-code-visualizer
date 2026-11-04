@@ -147,8 +147,8 @@ impl VisualizerApp {
             self.stick_forward = deadzone(gamepad.value(Axis::LeftStickY));
             self.stick_turn = deadzone(gamepad.value(Axis::RightStickX));
             let buttons = [
-                (Button::South, "a"), (Button::East, "b"),
-                (Button::West, "x"), (Button::North, "y"),
+                (Button::South, "south"), (Button::East, "east"),
+                (Button::West, "west"), (Button::North, "north"),
                 (Button::LeftTrigger, "left_bumper"), (Button::RightTrigger, "right_bumper"),
                 (Button::DPadUp, "dpad_up"), (Button::DPadDown, "dpad_down"),
                 (Button::DPadLeft, "dpad_left"), (Button::DPadRight, "dpad_right"),
