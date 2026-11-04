@@ -4,15 +4,21 @@ A Rust desktop application for visualizing FTC robot code and testing robot moti
 
 ## Current status
 
-The first application scaffold is in place:
-
 - Native desktop window built with Rust and egui.
-- 144 × 144 inch field coordinate space.
+- Uses the supplied BIOBUZZ top-down field screenshot as the field background.
+- 144 × 144 inch coordinate space.
 - Robot position and heading controls.
 - Basic run, pause, and reset motion test.
-- BIOBUZZ 2026–2027 project label.
 
-The current field drawing is a coordinate-space placeholder, not an accurate BIOBUZZ field model. Official field geometry and scoring locations must be added from the season's official resources before using it for match planning.
+## Field image setup
+
+The app loads the field image from:
+
+```text
+assets/biobuzz-field.png
+```
+
+Create the `assets` folder in the project root and place the supplied top-down field screenshot there with that exact filename. The app displays that image directly; it does not redraw or approximate the field elements.
 
 ## Run locally
 
@@ -24,7 +30,7 @@ cargo run
 
 ## Planned work
 
-1. Implement verified BIOBUZZ field geometry and field elements.
+1. Calibrate the field image to the official 144 × 144 inch coordinate bounds.
 2. Add robot configuration and coordinate transforms.
 3. Import FTC Android Studio projects.
 4. Parse supported Java/Kotlin OpMode patterns.
