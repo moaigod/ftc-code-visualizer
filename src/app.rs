@@ -264,8 +264,16 @@ impl VisualizerApp {
             }
             "runtime" | "elapsedtime" | "elapsed_seconds" => return format!("{:.2} s", self.elapsed_seconds),
             "pollen" | "pollencount" | "pollen_count" | "robot.pollen" => return format!("{}/4", self.pollen_count),
-            "shootervelocity" | "shooter_velocity" | "outtaker.getvelocity()" | "shooter.getvelocity()" => return format!("{:.0} rpm", self.shooter_motor_power * 6000.0),
-            "shooterpower" | "shooter_power" | "outtaker.getpower()" | "shooter.getpower()" => return format!("{:.2}", self.shooter_motor_power),
+            "shootervelocity" | "shooter_velocity" | "outtaker.getvelocity()" | "shooter.getvelocity()" => {
+                return self.detected_shooter_command()
+                    .map(|(kind, value)| format!("{kind}: {value}"))
+                    .unwrap_or_else(|| "No shooter command found".to_owned());
+            },
+            "shooterpower" | "shooter_power" | "outtaker.getpower()" | "shooter.getpower()" => {
+                return self.detected_shooter_power()
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "Unavailable".to_owned());
+            },
             "gamepad1.left_stick_x" | "gamepad1.leftstickx" => return format!("{:.2}", self.stick_strafe),
             "gamepad1.left_stick_y" | "gamepad1.leftsticky" => return format!("{:.2}", self.stick_forward),
             "gamepad1.right_stick_x" | "gamepad1.rightstickx" => return format!("{:.2}", self.stick_turn),
