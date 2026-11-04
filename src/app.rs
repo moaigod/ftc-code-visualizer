@@ -747,7 +747,14 @@ impl eframe::App for VisualizerApp {
                     ui.label("No gamepad1 button if-blocks detected in the selected OpMode.");
                 } else {
                     for (button, action) in actions {
-                        ui.label(format!("gamepad1.{button} → {action}"));
+                        let label = match button.as_str() {
+                            "south" => "Bottom face button (A / Cross)",
+                            "east" => "Right face button (B / Circle)",
+                            "west" => "Left face button (X / Square)",
+                            "north" => "Top face button (Y / Triangle)",
+                            other => other,
+                        };
+                        ui.label(format!("{label} → {action}"));
                     }
                     ui.label("Button actions are checked while TeleOp is running.");
                 }
