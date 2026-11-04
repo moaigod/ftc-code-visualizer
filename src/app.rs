@@ -493,8 +493,9 @@ fn find_motor_command(source: &str, motor_name: &str) -> Option<(String, String)
 
 fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> {
     let program = crate::ftc_interpreter::interpret(source);
+    let motors = program.motors.clone();
     program.commands.into_iter().filter_map(|command| {
-        let motor = program.motors.iter().find(|m| m.variable == command.motor)?;
+        let motor = motors.iter().find(|m| m.variable == command.motor)?;
         matches!(motor.role, crate::ftc_interpreter::MotorRole::Outtake)
             .then_some((motor.variable.clone(), motor.hardware_name.clone(), command.method, command.expression))
     }).collect()
