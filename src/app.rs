@@ -10,7 +10,6 @@ const MAX_TURN_DEG_S: f32 = 180.0;
 const MAX_POLLEN: u8 = 4;
 const POLLEN_RADIUS_IN: f32 = 1.4;
 const INTAKE_RANGE_IN: f32 = 10.0;
-const SHOT_SPEED_IN_S: f32 = 42.0;
 const SHOT_FLIGHT_SECONDS: f32 = 0.72;
 const FLOWER_INTAKE_COOLDOWN_SECONDS: f32 = 0.5;
 
@@ -48,6 +47,7 @@ pub struct VisualizerApp {
     drive_wheel_power: [f32; 4],
     drive_wheel_velocity: [f32; 4],
     shooter_motor_power: f32,
+    motor_names: [String; 5],
     flower_intake_cooldown: f32,
 }
 
@@ -72,7 +72,14 @@ impl Default for VisualizerApp {
             pollen_status: "4 preloaded pollen onboard.".to_owned(),
             drive_wheel_power: [0.0; 4],
             drive_wheel_velocity: [0.0; 4],
-            shooter_motor_power: 0.8,
+            shooter_motor_power: 0.0,
+            motor_names: [
+                "frontLeft".to_owned(),
+                "frontRight".to_owned(),
+                "backLeft".to_owned(),
+                "backRight".to_owned(),
+                String::new(),
+            ],
             flower_intake_cooldown: 0.0,
         }
     }
@@ -141,6 +148,20 @@ impl VisualizerApp {
     }
 
 
+
+    fn detected_shooter_command(&self) -> Option<(String, String)> {
+        let name = self.motor_names[4].trim();
+        if name.is_empty() { return None; }
+        let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i))?.source.as_str();
+        find_motor_command(source, name)
+    }
+
+    fn detected_shooter_power(&self) -> Option<f32> {
+        let (kind, value) = self.detected_shooter_command()?;
+        if kind != "setPower" { return None; }
+        value.trim().parse::<f32>().ok()
+    }
+
     fn intake_pollen(&mut self) {
         if self.pollen_count >= MAX_POLLEN {
             self.pollen_status = "Robot is full (4/4 pollen).".to_owned();
@@ -183,7 +204,7 @@ impl VisualizerApp {
         }
 
         let heading = self.heading_deg.to_radians();
-        let speed = SHOT_SPEED_IN_S * self.shooter_motor_power;
+        let speed = self.detected_shooter_power().unwrap_or(0.0) * 42.0;
         if speed <= 0.1 {
             self.pollen_status = "Shooter motor power is zero.".to_owned();
             return;
@@ -267,7 +288,7 @@ impl VisualizerApp {
 
         if key.contains(".getvelocity()") {
             if key.contains("outtaker") || key.contains("shooter") {
-                return format!("{:.0} rpm (simulated)", self.shooter_motor_power * 6000.0);
+                return self.detected_shooter_command().map(|(kind, value)| format!("{kind}: {value}")).unwrap_or_else(|| "No shooter command found".to_owned());
             }
             let motor = key.split('.').next().unwrap_or("");
             let index = if motor.contains("frontleft") { Some(0) }
@@ -279,7 +300,7 @@ impl VisualizerApp {
         }
         if key.contains(".getpower()") {
             if key.contains("outtaker") || key.contains("shooter") {
-                return format!("{:.2}", self.shooter_motor_power);
+                return format!("{:.2}", self.detected_shooter_power().unwrap_or(0.0));
             }
             let motor = key.split('.').next().unwrap_or("");
             let index = if motor.contains("frontleft") { Some(0) }
@@ -406,6 +427,41 @@ impl VisualizerApp {
 }
 
 
+
+fn find_motor_command(source: &str, motor_name: &str) -> Option<(String, String)> {
+    for method in ["setVelocity", "setPower"] {
+        let pattern = format!("{motor_name}.{method}");
+        let mut search_from = 0;
+        while let Some(relative) = source[search_from..].find(&pattern) {
+            let start = search_from + relative + pattern.len();
+            let after = source[start..].trim_start();
+            if let Some(args) = after.strip_prefix('(') {
+                let mut depth = 1_i32;
+                let mut end = None;
+                for (index, character) in args.char_indices() {
+                    match character {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 { end = Some(index); break; }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(end) = end {
+                    let expression = args[..end].trim();
+                    if !expression.is_empty() {
+                        return Some((method.to_owned(), expression.to_owned()));
+                    }
+                }
+            }
+            search_from = start;
+            if search_from >= source.len() { break; }
+        }
+    }
+    None
+}
+
 fn starting_field_pollen() -> Vec<Pollen> {
     let mut pollen = Vec::with_capacity(24);
 
@@ -517,9 +573,20 @@ impl eframe::App for VisualizerApp {
             ui.heading("Pollen");
             ui.strong(format!("Carrying: {}/4", self.pollen_count));
             ui.label(&self.pollen_status);
-            ui.add(egui::Slider::new(&mut self.shooter_motor_power, 0.0..=1.0).text("Shooter motor power"));
-            ui.label(format!("Shooter velocity: {:.0} rpm", self.shooter_motor_power * 6000.0));
-            ui.label(format!("Pollen launch velocity: {:.1} in/s", SHOT_SPEED_IN_S * self.shooter_motor_power));
+            ui.collapsing("Motor name mapping (match your code variables)", |ui| {
+                for (label, index) in [("Front left", 0), ("Front right", 1), ("Back left", 2), ("Back right", 3), ("Shooter", 4)] {
+                    ui.horizontal(|ui| {
+                        ui.label(label);
+                        ui.add(egui::TextEdit::singleline(&mut self.motor_names[index]).desired_width(130.0));
+                    });
+                }
+            });
+            if let Some((kind, value)) = self.detected_shooter_command() {
+                ui.label(format!("Shooter command found: {kind}({value})"));
+            } else {
+                ui.label("No shooter setPower()/setVelocity() command found in the selected OpMode.");
+            }
+            ui.label("Shooter velocity is read from the selected OpMode; physical projectile speed needs wheel/gearing calibration.");
             ui.horizontal(|ui| {
                 if ui.button("Intake pollen [E]").clicked() {
                     self.intake_pollen();
@@ -529,6 +596,21 @@ impl eframe::App for VisualizerApp {
                 }
             });
             ui.label("Move the front intake close to a yellow pollen ball, then intake.");
+            ui.collapsing("Detected motor commands", |ui| {
+                if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
+                    for (label, index) in [("Front left", 0), ("Front right", 1), ("Back left", 2), ("Back right", 3), ("Shooter", 4)] {
+                        let name = self.motor_names[index].trim();
+                        if name.is_empty() { continue; }
+                        if let Some((kind, value)) = find_motor_command(&mode.source, name) {
+                            ui.label(format!("{label} ({name}): {kind}({value})"));
+                        } else {
+                            ui.label(format!("{label} ({name}): no setPower()/setVelocity() found"));
+                        }
+                    }
+                } else {
+                    ui.label("Import and select an OpMode to scan motor usage.");
+                }
+            });
             ui.add_space(8.0);
             ui.heading("OpMode telemetry");
             if let Some(index) = self.selected_op_mode {
