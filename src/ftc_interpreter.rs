@@ -34,25 +34,17 @@ pub fn interpret(source: &str) -> Program {
     let mut program = Program::default();
     let tokens = tokenize(&clean);
 
-    // Parse hardwareMap.get(DcMotor.class, "configuredName") assignments.
-    let mut i = 0;
-    while i < tokens.len() {
-        if tokens[i].ident() == Some("hardwareMap") {
-            if let Some(eq) = tokens.iter().enumerate().skip(i).take(12).find(|(_, t)| t.punct("=")).map(|(n, _)| n) {
-                if eq > i {
-                    let variable = tokens[eq - 1].text.clone();
-                    if let Some(open) = tokens.iter().enumerate().skip(eq + 1).take(8).find(|(_, t)| t.punct("(")).map(|(n, _)| n) {
-                        if let Some(name) = tokens.get(open + 1..).and_then(|tail| tail.iter().find(|t| t.string).map(|t| t.text.clone())) {
-                            if !program.motors.iter().any(|m| m.variable == variable) {
-                                let role = classify_motor(&variable, &name);
-                                program.motors.push(Motor { variable, hardware_name: name, role });
-                            }
-                        }
-                    }
-                }
-            }
+    // Parse Java assignments and Kotlin-style hardwareMap.get declarations.
+    for eq in 1..tokens.len().saturating_sub(3) {
+        if !tokens[eq].punct("=") || !tokens[eq + 1].ident_is("hardwareMap") { continue; }
+        let variable = tokens[..eq].iter().rev().find_map(|t| t.ident()).unwrap_or("").to_owned();
+        if variable.is_empty() { continue; }
+        let end = (eq + 2..tokens.len()).find(|&n| tokens[n].punct(";") || tokens[n].punct(")")).unwrap_or(tokens.len());
+        let Some(name) = tokens[eq + 2..end].iter().find(|t| t.string).map(|t| t.text.clone()) else { continue; };
+        if !program.motors.iter().any(|m| m.variable == variable) {
+            let role = classify_motor(&variable, &name);
+            program.motors.push(Motor { variable, hardware_name: name, role });
         }
-        i += 1;
     }
 
     // Find if(gamepad1.<button>) blocks; braces are balanced from tokens, so
@@ -73,16 +65,26 @@ pub fn interpret(source: &str) -> Program {
 
     for motor in &program.motors {
         let mut n = 0;
-        while n + 3 < tokens.len() {
-            if tokens[n].ident_is(&motor.variable) && tokens[n + 1].punct(".") {
-                let method = tokens[n + 2].text.as_str();
-                if matches!(method, "setPower" | "setVelocity" | "setTargetPosition" | "setMode" | "setDirection" | "setZeroPowerBehavior") && tokens[n + 3].punct("(") {
-                    if let Some(end) = matching(&tokens, n + 3, "(", ")") {
-                        let expression = tokens[n + 4..end].iter().map(|t| t.text.as_str()).collect::<String>();
-                        let button = button_blocks.iter().filter(|(_, start, finish)| n > *start && n < *finish).min_by_key(|(_, start, finish)| finish - start).map(|(b, _, _)| b.clone());
-                        let value = resolve_number(source, &expression);
-                        program.commands.push(MotorCommand { motor: motor.variable.clone(), method: method.to_owned(), expression, value, button });
-                        n = end;
+        while n < tokens.len() {
+            if tokens[n].ident_is(&motor.variable) {
+                let search_end = (n + 7).min(tokens.len());
+                let method_at = (n + 1..search_end).find(|&p| {
+                    tokens[p].punct(".") && tokens.get(p + 1).and_then(Token::ident).is_some_and(|name|
+                        matches!(name, "setPower" | "setVelocity" | "setTargetPosition" | "setMode" | "setDirection" | "setZeroPowerBehavior"))
+                });
+                if let Some(dot) = method_at {
+                    let method = tokens[dot + 1].text.clone();
+                    if tokens.get(dot + 2).is_some_and(|t| t.punct("(")) {
+                        if let Some(end) = matching(&tokens, dot + 2, "(", ")") {
+                            let expression = tokens[dot + 3..end].iter().map(|t| t.text.as_str()).collect::<String>();
+                            let button = button_blocks.iter()
+                                .filter(|(_, start, finish)| n > *start && n < *finish)
+                                .min_by_key(|(_, start, finish)| finish - start)
+                                .map(|(b, _, _)| b.clone());
+                            let value = resolve_number(source, &expression);
+                            program.commands.push(MotorCommand { motor: motor.variable.clone(), method, expression, value, button });
+                            n = end;
+                        }
                     }
                 }
             }
