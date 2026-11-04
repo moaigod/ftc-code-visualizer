@@ -473,126 +473,18 @@ impl VisualizerApp {
 // Find FTC motor variables initialized through hardwareMap.get(...).
 // Supports common Java and Kotlin one-line declarations/assignments.
 fn find_gamepad_actions(source: &str) -> Vec<(String, String)> {
-    let mut results = Vec::new();
-    let lines = source.lines().collect::<Vec<_>>();
-    // Accept Xbox and PlayStation aliases for the same physical face-button positions.
-    let buttons: [(&str, &[&str]); 12] = [
-        ("south", &["a", "cross"]),
-        ("east", &["b", "circle"]),
-        ("west", &["x", "square"]),
-        ("north", &["y", "triangle"]),
-        ("left_bumper", &["left_bumper"]),
-        ("right_bumper", &["right_bumper"]),
-        ("dpad_up", &["dpad_up"]),
-        ("dpad_down", &["dpad_down"]),
-        ("dpad_left", &["dpad_left"]),
-        ("dpad_right", &["dpad_right"]),
-        ("start", &["start"]),
-        ("back", &["back"]),
-    ];
-
-    for (line_index, line) in lines.iter().enumerate() {
-        let lower = line.to_ascii_lowercase();
-        if !lower.contains("if") || !lower.contains("gamepad1.") { continue; }
-        let Some(button) = buttons.iter().find_map(|(position, aliases)| {
-            aliases.iter()
-                .find(|alias| lower.contains(&format!("gamepad1.{alias}")))
-                .map(|_| *position)
-        }) else { continue; };
-
-        let mut block = String::new();
-        let mut depth = 0_i32;
-        let mut started = false;
-        for body_line in lines.iter().skip(line_index) {
-            block.push_str(body_line);
-            block.push('\n');
-            for ch in body_line.chars() {
-                if ch == '{' { depth += 1; started = true; }
-                if ch == '}' { depth -= 1; }
-            }
-            if started && depth <= 0 { break; }
-            if !started && body_line.contains(';') { break; }
-        }
-
-        let lower_block = block.to_ascii_lowercase();
-        let action = if lower_block.contains("intake") {
-            "intake".to_owned()
-        } else if lower_block.contains("outtake") || lower_block.contains("shooter") {
-            "outtake/shooter".to_owned()
-        } else {
-            "other OpMode command".to_owned()
-        };
-        let name = (*button).to_owned();
-        if !results.iter().any(|(existing, _)| existing == &name) {
-            results.push((name, action));
-        }
-    }
-    results
+    crate::ftc_interpreter::interpret(source).button_actions
 }
 
 fn find_defined_motors(source: &str) -> Vec<(String, String)> {
-    let mut motors = Vec::new();
-    for line in source.lines() {
-        let Some(get_position) = line.find("hardwareMap.get(") else { continue; };
-        let before_get = &line[..get_position];
-        let Some((left, _)) = before_get.split_once('=') else { continue; };
-        let variable = left
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .filter(|part| !part.is_empty())
-            .last()
-            .unwrap_or("");
-        if variable.is_empty() { continue; }
-
-        let after_get = &line[get_position + "hardwareMap.get(".len()..];
-        let Some(first_quote) = after_get.find('"') else { continue; };
-        let after_quote = &after_get[first_quote + 1..];
-        let Some(end_quote) = after_quote.find('"') else { continue; };
-        let hardware_name = after_quote[..end_quote].trim();
-        if hardware_name.is_empty() { continue; }
-
-        if !motors.iter().any(|(existing, _)| existing == variable) {
-            motors.push((variable.to_owned(), hardware_name.to_owned()));
-        }
-    }
-    motors
+    crate::ftc_interpreter::interpret(source).motors.into_iter()
+        .map(|motor| (motor.variable, motor.hardware_name)).collect()
 }
 
 fn find_motor_commands(source: &str, motor_name: &str) -> Vec<(String, String)> {
-    let mut commands = Vec::new();
-    for method in ["setVelocity", "setPower"] {
-        let mut search_from = 0;
-        while let Some(relative) = source[search_from..].find(motor_name) {
-            let name_end = search_from + relative + motor_name.len();
-            let line_end = source[name_end..].find(';').map(|i| name_end + i).unwrap_or(source.len());
-            let statement = &source[name_end..line_end];
-            if let Some(method_pos) = statement.find(&format!(".{method}")) {
-                let after_method = statement[method_pos + method.len() + 1..].trim_start();
-                if let Some(args) = after_method.strip_prefix('(') {
-                    let mut depth = 1_i32;
-                    let mut end = None;
-                    for (index, character) in args.char_indices() {
-                        match character {
-                            '(' => depth += 1,
-                            ')' => {
-                                depth -= 1;
-                                if depth == 0 { end = Some(index); break; }
-                            }
-                            _ => {}
-                        }
-                    }
-                    if let Some(end) = end {
-                        let value = args[..end].trim().to_owned();
-                        if !value.is_empty() && !commands.iter().any(|(k, v)| k == method && v == &value) {
-                            commands.push((method.to_owned(), value));
-                        }
-                    }
-                }
-            }
-            search_from = name_end;
-            if search_from >= source.len() { break; }
-        }
-    }
-    commands
+    crate::ftc_interpreter::interpret(source).commands.into_iter()
+        .filter(|command| command.motor == motor_name)
+        .map(|command| (command.method, command.expression)).collect()
 }
 
 fn find_motor_command(source: &str, motor_name: &str) -> Option<(String, String)> {
@@ -600,18 +492,12 @@ fn find_motor_command(source: &str, motor_name: &str) -> Option<(String, String)
 }
 
 fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> {
-    let mut results = Vec::new();
-    for (variable, hardware_name) in find_defined_motors(source) {
-        let name = variable.to_ascii_lowercase();
-        let hardware = hardware_name.to_ascii_lowercase();
-        if !(name.contains("outtake") || name.contains("shooter") || hardware.contains("outtake") || hardware.contains("shooter")) {
-            continue;
-        }
-        for (kind, value) in find_motor_commands(source, &variable) {
-            results.push((variable.clone(), hardware_name.clone(), kind, value));
-        }
-    }
-    results
+    let program = crate::ftc_interpreter::interpret(source);
+    program.commands.into_iter().filter_map(|command| {
+        let motor = program.motors.iter().find(|m| m.variable == command.motor)?;
+        matches!(motor.role, crate::ftc_interpreter::MotorRole::Outtake)
+            .then_some((motor.variable.clone(), motor.hardware_name.clone(), command.method, command.expression))
+    }).collect()
 }
 
 fn starting_field_pollen() -> Vec<Pollen> {
