@@ -8,9 +8,10 @@ A Rust desktop application for visualizing FTC robot code and testing robot moti
 - Uses the supplied BIOBUZZ top-down field screenshot as the field background.
 - 144 × 144 inch coordinate space.
 - Robot position, heading, and basic motion controls.
-- Select an FTC Android Studio project folder and scan its TeamCode Java/Kotlin source.
+- Import an FTC Android Studio project and scan TeamCode Java/Kotlin source.
 - Detect and list classes annotated with `@TeleOp` or `@Autonomous`.
 - Open a read-only source preview for a detected OpMode.
+- Controller-driven TeleOp field movement using a connected gamepad.
 
 ## Field image setup
 
@@ -26,9 +27,17 @@ Create the `assets` folder in the project root and place the supplied top-down f
 
 Run the app and select **Import FTC project folder**. Choose the root folder of your Android Studio FTC project (the folder containing `TeamCode`, not the `TeamCode` folder itself).
 
-The current importer scans `TeamCode/src/main/java` for Java and Kotlin files, detects `@TeleOp` and `@Autonomous` annotations, and lets you inspect their source.
+The importer scans `TeamCode/src/main/java` for Java and Kotlin files, detects `@TeleOp` and `@Autonomous` annotations, and lets you inspect their source.
 
-This is the first import milestone only. It does not yet interpret motor commands, Road Runner/PedroPathing trajectories, hardware mappings, or execute Android code.
+## TeleOp controller
+
+Connect an Xbox-compatible gamepad before launching the app, then press **Start TeleOp**.
+
+- Left stick Y: forward and backward
+- Left stick X: strafe
+- Right stick X: rotate
+
+This currently drives a generic mecanum-style robot model. It is a controller-based simulator input, not yet an execution of the selected OpMode's code. The next interpreter milestone will map supported gamepad expressions and motor-power logic from imported source onto the simulation.
 
 ## Run locally
 
@@ -41,9 +50,9 @@ cargo run
 ## Next development steps
 
 1. Parse FTC hardware mappings and motor/servo declarations.
-2. Recognize supported movement commands and build an intermediate robot-action model.
-3. Add PedroPathing 3 path extraction and rendering.
-4. Simulate supported OpMode behavior on the field.
+2. Interpret common gamepad-to-motor logic from TeleOp source.
+3. Add autonomous command and sequence interpretation.
+4. Add PedroPathing 3 path extraction and rendering.
 5. Add a separate live telemetry bridge.
 
 ## Important limitation
