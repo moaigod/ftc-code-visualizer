@@ -717,8 +717,8 @@ impl VisualizerApp {
         // Show the scoring pieces that have entered each hive. They are stored
         // as load counters, so render small markers rather than deleting them visually.
         for (center, pollen_count, nectar_count, color) in [
-            (HIVE_RED_CENTER, self.red_hive_pollen, self.red_hive_extra_nectar, Color32::from_rgb(235, 55, 65)),
-            (HIVE_BLUE_CENTER, self.blue_hive_pollen, self.blue_hive_extra_nectar, Color32::from_rgb(55, 125, 245)),
+            (hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0, self.red_hive_pollen, self.red_hive_extra_nectar, Color32::from_rgb(235, 55, 65)),
+            (hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0, self.blue_hive_pollen, self.blue_hive_extra_nectar, Color32::from_rgb(55, 125, 245)),
         ] {
             let total = pollen_count as usize + nectar_count as usize;
             for i in 0..total {
@@ -916,9 +916,8 @@ fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: Hiv
     let min_y = center.1 - HIVE_CELL_HALF_DEPTH_IN;
     let max_y = center.1 + HIVE_CELL_HALF_DEPTH_IN;
 
-    if element.hive == Some(side) {
-        // The three preloaded Nectar pieces remain physically loose inside
-        // their own hive until it tips.
+    if element.hive == Some(side) && point_in_hive_cell((element.x, element.y), center) {
+        // Preloaded Nectar stays inside its own fixed cell until that cell tips.
         let min_x = min_x + element.radius;
         let max_x = max_x - element.radius;
         let min_y = min_y + element.radius;
