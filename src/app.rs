@@ -7,6 +7,26 @@ const FIELD_SIZE_IN: f32 = 144.0;
 const ROBOT_SIZE_IN: f32 = 18.0;
 const MAX_SPEED_IN_S: f32 = 48.0;
 const MAX_TURN_DEG_S: f32 = 180.0;
+const MAX_POLLEN: u8 = 4;
+const POLLEN_RADIUS_IN: f32 = 1.4;
+const INTAKE_RANGE_IN: f32 = 10.0;
+const SHOT_SPEED_IN_S: f32 = 42.0;
+const SHOT_FLIGHT_SECONDS: f32 = 0.72;
+
+#[derive(Clone, Copy, Debug)]
+struct Pollen {
+    x: f32,
+    y: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PollenProjectile {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    elapsed: f32,
+}
 
 pub struct VisualizerApp {
     robot_x: f32, robot_y: f32, heading_deg: f32, drive_speed: f32,
@@ -18,6 +38,10 @@ pub struct VisualizerApp {
     gamepad: Option<Gilrs>, controller_status: String,
     stick_forward: f32, stick_strafe: f32, stick_turn: f32,
     forward_velocity: f32, strafe_velocity: f32, turn_velocity: f32,
+    pollen_count: u8,
+    field_pollen: Vec<Pollen>,
+    pollen_projectile: Option<PollenProjectile>,
+    pollen_status: String,
 }
 
 impl Default for VisualizerApp {
@@ -35,6 +59,10 @@ impl Default for VisualizerApp {
             import_status: "No FTC project loaded.".to_owned(),
             gamepad, controller_status, stick_forward: 0.0, stick_strafe: 0.0, stick_turn: 0.0,
             forward_velocity: 0.0, strafe_velocity: 0.0, turn_velocity: 0.0,
+            pollen_count: MAX_POLLEN,
+            field_pollen: starting_field_pollen(),
+            pollen_projectile: None,
+            pollen_status: "4 preloaded pollen onboard.".to_owned(),
         }
     }
 }
@@ -102,6 +130,79 @@ impl VisualizerApp {
     }
 
 
+    fn intake_pollen(&mut self) {
+        if self.pollen_count >= MAX_POLLEN {
+            self.pollen_status = "Robot is full (4/4 pollen).".to_owned();
+            return;
+        }
+
+        let heading = self.heading_deg.to_radians();
+        let intake_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 2.0);
+        let intake_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 2.0);
+        let nearest = self.field_pollen.iter().enumerate()
+            .map(|(i, pollen)| (i, (pollen.x - intake_x).hypot(pollen.y - intake_y)))
+            .filter(|(_, distance)| *distance <= INTAKE_RANGE_IN)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+
+        if let Some((index, _)) = nearest {
+            self.field_pollen.remove(index);
+            self.pollen_count += 1;
+            self.pollen_status = format!("Pollen collected: {}/4 onboard.", self.pollen_count);
+        } else {
+            self.pollen_status = "No pollen close enough to the intake.".to_owned();
+        }
+    }
+
+    fn shoot_pollen(&mut self) {
+        if self.pollen_count == 0 {
+            self.pollen_status = "No pollen onboard to shoot.".to_owned();
+            return;
+        }
+        if self.pollen_projectile.is_some() {
+            self.pollen_status = "Wait for the current pollen to land.".to_owned();
+            return;
+        }
+
+        let heading = self.heading_deg.to_radians();
+        let speed = SHOT_SPEED_IN_S;
+        let start_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 1.0);
+        let start_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 1.0);
+        self.pollen_projectile = Some(PollenProjectile {
+            x: start_x,
+            y: start_y,
+            vx: heading.sin() * speed,
+            vy: heading.cos() * speed,
+            elapsed: 0.0,
+        });
+        self.pollen_count -= 1;
+        self.pollen_status = format!("Pollen launched: {}/4 onboard.", self.pollen_count);
+    }
+
+    fn update_pollen(&mut self, dt: f32) {
+        if let Some(mut projectile) = self.pollen_projectile {
+            projectile.elapsed += dt;
+            projectile.x += projectile.vx * dt;
+            projectile.y += projectile.vy * dt;
+
+            if projectile.elapsed >= SHOT_FLIGHT_SECONDS
+                || projectile.x < POLLEN_RADIUS_IN
+                || projectile.x > FIELD_SIZE_IN - POLLEN_RADIUS_IN
+                || projectile.y < POLLEN_RADIUS_IN
+                || projectile.y > FIELD_SIZE_IN - POLLEN_RADIUS_IN
+            {
+                let landed = Pollen {
+                    x: projectile.x.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
+                    y: projectile.y.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
+                };
+                self.field_pollen.push(landed);
+                self.pollen_projectile = None;
+                self.pollen_status = format!("Pollen landed back on the field. {}/4 onboard.", self.pollen_count);
+            } else {
+                self.pollen_projectile = Some(projectile);
+            }
+        }
+    }
+
     fn telemetry_value(&self, expression: &str) -> String {
         let key = expression.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase();
 
@@ -118,6 +219,7 @@ impl VisualizerApp {
                 return format!("{:.1} in", self.robot_y);
             }
             "runtime" | "elapsedtime" | "elapsed_seconds" => return format!("{:.2} s", self.elapsed_seconds),
+            "pollen" | "pollencount" | "pollen_count" | "robot.pollen" => return format!("{}/4", self.pollen_count),
             "gamepad1.left_stick_x" | "gamepad1.leftstickx" => return format!("{:.2}", self.stick_strafe),
             "gamepad1.left_stick_y" | "gamepad1.leftsticky" => return format!("{:.2}", self.stick_forward),
             "gamepad1.right_stick_x" | "gamepad1.rightstickx" => return format!("{:.2}", self.stick_turn),
@@ -147,6 +249,7 @@ impl VisualizerApp {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
+        self.update_pollen(dt);
 
         if self.teleop_active {
             self.poll_controller();
@@ -206,6 +309,28 @@ impl VisualizerApp {
                 FontId::proportional(16.0), Color32::WHITE);
         }
         let scale = field.width() / FIELD_SIZE_IN;
+
+        // Field pollen: yellow balls at the manual's Flower and Garden staging areas.
+        for pollen in &self.field_pollen {
+            let position = Pos2::new(
+                field.left() + pollen.x * scale,
+                field.bottom() - pollen.y * scale,
+            );
+            painter.circle_filled(position, POLLEN_RADIUS_IN * scale, Color32::from_rgb(255, 218, 35));
+            painter.circle_stroke(position, POLLEN_RADIUS_IN * scale, Stroke::new(1.0, Color32::from_rgb(120, 92, 0)));
+        }
+
+        if let Some(projectile) = self.pollen_projectile {
+            let flight = (projectile.elapsed / SHOT_FLIGHT_SECONDS).clamp(0.0, 1.0);
+            let arc_height = 18.0 * 4.0 * flight * (1.0 - flight);
+            let position = Pos2::new(
+                field.left() + projectile.x * scale,
+                field.bottom() - projectile.y * scale - arc_height * scale,
+            );
+            painter.circle_filled(position, POLLEN_RADIUS_IN * scale, Color32::from_rgb(255, 235, 90));
+            painter.circle_stroke(position, POLLEN_RADIUS_IN * scale, Stroke::new(1.2, Color32::WHITE));
+        }
+
         let center = Pos2::new(field.left() + self.robot_x * scale, field.bottom() - self.robot_y * scale);
         let half = ROBOT_SIZE_IN * scale / 2.0;
         let robot = Rect::from_center_size(center, Vec2::splat(half * 2.0));
@@ -223,6 +348,26 @@ impl VisualizerApp {
     }
 }
 
+
+fn starting_field_pollen() -> Vec<Pollen> {
+    let mut pollen = Vec::with_capacity(24);
+
+    // Four Flowers attached to the four field walls; four pollen at each retrieval side.
+    for offset in [-5.0_f32, -1.7, 1.7, 5.0] {
+        pollen.push(Pollen { x: 72.0 + offset, y: 10.0 });
+        pollen.push(Pollen { x: 134.0, y: 72.0 + offset });
+        pollen.push(Pollen { x: 72.0 + offset, y: 134.0 });
+        pollen.push(Pollen { x: 10.0, y: 72.0 + offset });
+    }
+
+    // Four pollen in each alliance Garden, staged in opposite corners.
+    for offset in [0.0_f32, 4.5, 9.0, 13.5] {
+        pollen.push(Pollen { x: 8.0 + offset, y: 8.0 });
+        pollen.push(Pollen { x: 136.0 - offset, y: 136.0 });
+    }
+
+    pollen
+}
 
 fn numeric_variable(source: &str, variable: &str) -> Option<f32> {
     for line in source.lines() {
@@ -254,6 +399,10 @@ fn approach(current: f32, target: f32, max_delta: f32) -> f32 {
 impl eframe::App for VisualizerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.load_field_image(ctx);
+        let intake_pressed = ctx.input(|input| input.key_pressed(egui::Key::E));
+        let shoot_pressed = ctx.input(|input| input.key_pressed(egui::Key::Space));
+        if intake_pressed { self.intake_pollen(); }
+        if shoot_pressed { self.shoot_pollen(); }
         self.update_simulation(ctx);
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -292,6 +441,20 @@ impl eframe::App for VisualizerApp {
             }
             ui.label(format!("Input: F {:.2} · S {:.2} · R {:.2}",
                 self.stick_forward, self.stick_strafe, self.stick_turn));
+            ui.add_space(8.0);
+            ui.separator();
+            ui.heading("Pollen");
+            ui.strong(format!("Carrying: {}/4", self.pollen_count));
+            ui.label(&self.pollen_status);
+            ui.horizontal(|ui| {
+                if ui.button("Intake pollen [E]").clicked() {
+                    self.intake_pollen();
+                }
+                if ui.button("Shoot pollen [Space]").clicked() {
+                    self.shoot_pollen();
+                }
+            });
+            ui.label("Move the front intake close to a yellow pollen ball, then intake.");
             ui.add_space(8.0);
             ui.heading("OpMode telemetry");
             if let Some(index) = self.selected_op_mode {
