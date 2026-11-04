@@ -748,8 +748,35 @@ impl VisualizerApp {
         }
         let scale = field.width() / FIELD_SIZE_IN;
 
-        // Scored elements are retained in field_pollen at their reduced
-        // radius, so the normal element renderer below shows their true size.
+        // Highlight the exact 22 x 14 inch rectangles used by the scoring
+        // collision test. Only the currently untipped cell for each alliance
+        // is scoreable; the paired tipped cell is intentionally not outlined.
+        let score_zones = [
+            (hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0, Color32::from_rgb(235, 65, 75), "RED SCORE ZONE"),
+            (hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0, Color32::from_rgb(65, 145, 255), "BLUE SCORE ZONE"),
+        ];
+        for (zone_center, color, label) in score_zones {
+            let min = Pos2::new(
+                field.left() + (zone_center.0 - HIVE_CELL_HALF_WIDTH_IN) * scale,
+                field.bottom() - (zone_center.1 + HIVE_CELL_HALF_DEPTH_IN) * scale,
+            );
+            let max = Pos2::new(
+                field.left() + (zone_center.0 + HIVE_CELL_HALF_WIDTH_IN) * scale,
+                field.bottom() - (zone_center.1 - HIVE_CELL_HALF_DEPTH_IN) * scale,
+            );
+            let zone_rect = Rect::from_min_max(min, max);
+            painter.rect_filled(zone_rect, 0.0, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 35));
+            painter.rect_stroke(zone_rect, 0.0, Stroke::new(2.0, color), egui::StrokeKind::Inside);
+            painter.text(
+                Pos2::new(zone_rect.center().x, zone_rect.top() + 9.0),
+                Align2::CENTER_TOP,
+                label,
+                FontId::proportional(10.0),
+                color,
+            );
+        }
+
+        // Scored elements remain at their original radius and landing position.
 
         // Draw smaller pollen first so larger pieces are layered over them.
         let mut pollen_draw_order = self.field_pollen.iter().collect::<Vec<_>>();
