@@ -331,8 +331,6 @@ impl VisualizerApp {
         let heading = self.heading_deg.to_radians();
         let robot_vx = self.strafe_velocity * heading.cos() + self.forward_velocity * heading.sin();
         let robot_vy = -self.strafe_velocity * heading.sin() + self.forward_velocity * heading.cos();
-        let robot_radius = 12.73_f32;
-
         for pollen in &mut self.field_pollen {
             pollen.x += pollen.vx * dt;
             pollen.y += pollen.vy * dt;
@@ -412,10 +410,12 @@ impl VisualizerApp {
             min_x = min_x.min(wx); max_x = max_x.max(wx);
             min_y = min_y.min(wy); max_y = max_y.max(wy);
         }
-        self.robot_x += (9.0 - (self.robot_x + min_x)).max(0.0);
-        self.robot_x -= (self.robot_x + max_x - (FIELD_SIZE_IN - 9.0)).max(0.0);
-        self.robot_y += (9.0 - (self.robot_y + min_y)).max(0.0);
-        self.robot_y -= (self.robot_y + max_y - (FIELD_SIZE_IN - 9.0)).max(0.0);
+        // Field coordinates run from 0 to 144. The chassis edge, not
+        // its center, must stay within those boundaries.
+        self.robot_x += (-(self.robot_x + min_x)).max(0.0);
+        self.robot_x -= (self.robot_x + max_x - FIELD_SIZE_IN).max(0.0);
+        self.robot_y += (-(self.robot_y + min_y)).max(0.0);
+        self.robot_y -= (self.robot_y + max_y - FIELD_SIZE_IN).max(0.0);
     }
 
     fn update_pollen(&mut self, dt: f32) {
