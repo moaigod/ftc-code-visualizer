@@ -790,6 +790,11 @@ impl eframe::App for VisualizerApp {
             ui.collapsing("Detected motor commands", |ui| {
                 if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
                     let discovered = find_defined_motors(&mode.source);
+                    let drive_motors = discovered.iter().filter(|(variable, hardware)| { let names = format!("{} {}", variable, hardware).to_ascii_lowercase(); ["frontleft", "frontright", "backleft", "backright", "leftfront", "rightfront", "leftback", "rightback"].iter().any(|part| names.contains(part)) }).collect::<Vec<_>>();
+                    if !drive_motors.is_empty() {
+                        ui.label("Automatically detected drive motors:");
+                        for (variable, hardware) in drive_motors { ui.label(format!("{} -> hardware {}", variable, hardware)); }
+                    }
                     if discovered.is_empty() {
                         ui.label("No hardwareMap motor definitions found in this OpMode.");
                     } else {
