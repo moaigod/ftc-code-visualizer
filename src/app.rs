@@ -877,7 +877,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
 
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
-        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, vx: 0.0, vy: 0.0 });
+        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
         pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, vx: 0.0, vy: 0.0 });
     }
 
@@ -905,7 +905,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
         });
         pollen.push(Pollen {
             x: FIELD_SIZE_IN - 18.0 - offset, y: FIELD_SIZE_IN - 18.0,
-            radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar,
+            radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar, hive: None,
             vx: 0.0, vy: 0.0,
         });
     }
