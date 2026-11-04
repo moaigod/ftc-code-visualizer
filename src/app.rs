@@ -422,9 +422,9 @@ impl VisualizerApp {
                 let (left, right) = self.field_pollen.split_at_mut(j);
                 let a = &mut left[i];
                 let b = &mut right[0];
-                // Flower-stack pollen is fixed and cannot be displaced by
-                // loose pollen either.
-                if a.from_flower || b.from_flower {
+                // Flower-stack pollen is fixed, and scored elements are
+                // secured in the hive. Neither can collide with loose elements.
+                if a.from_flower || b.from_flower || a.scored || b.scored {
                     continue;
                 }
                 let dx = b.x - a.x;
