@@ -56,7 +56,7 @@ pub struct VisualizerApp {
     field_texture: Option<TextureHandle>, field_load_attempted: bool,
     project_name: Option<String>, op_modes: Vec<OpModeInfo>,
     selected_op_mode: Option<usize>, show_source: bool, import_status: String,
-    gamepad: Option<Gilrs>, controller_status: String,
+    gamepad: Option<Gilrs>, selected_gamepad: Option<gilrs::GamepadId>, controller_status: String,
     stick_forward: f32, stick_strafe: f32, stick_turn: f32,
     forward_velocity: f32, strafe_velocity: f32, turn_velocity: f32,
     carried_elements: Vec<ElementKind>,
@@ -96,7 +96,7 @@ impl Default for VisualizerApp {
             field_texture: None, field_load_attempted: false, project_name: None,
             op_modes: Vec::new(), selected_op_mode: None, show_source: false,
             import_status: "No FTC project loaded.".to_owned(),
-            gamepad, controller_status, stick_forward: 0.0, stick_strafe: 0.0, stick_turn: 0.0,
+            gamepad, selected_gamepad: None, controller_status, stick_forward: 0.0, stick_strafe: 0.0, stick_turn: 0.0,
             forward_velocity: 0.0, strafe_velocity: 0.0, turn_velocity: 0.0,
             carried_elements: vec![ElementKind::Pollen; MAX_POLLEN as usize],
             field_pollen: starting_field_pollen(),
@@ -171,8 +171,12 @@ impl VisualizerApp {
     fn poll_controller(&mut self) -> Vec<String> {
         let Some(gilrs) = self.gamepad.as_mut() else { return Vec::new(); };
         while gilrs.next_event().is_some() {}
-        let connected = gilrs.gamepads().find(|(_, gamepad)| gamepad.is_connected());
-        if let Some((_, gamepad)) = connected {
+        let selected_id = self.selected_gamepad
+            .filter(|id| gilrs.gamepad(*id).is_connected())
+            .or_else(|| gilrs.gamepads().find(|(_, gamepad)| gamepad.is_connected()).map(|(id, _)| id));
+        self.selected_gamepad = selected_id;
+        if let Some(id) = selected_id {
+            let gamepad = gilrs.gamepad(id);
             let detected_name = gamepad.name().to_ascii_lowercase();
             let layout = if detected_name.contains("dualsense") || detected_name.contains("dualshock") || detected_name.contains("playstation") || detected_name.contains("sony") {
                 "PlayStation"
@@ -981,6 +985,32 @@ impl eframe::App for VisualizerApp {
                 if ui.button("Reset").clicked() { self.reset(); }
             });
             ui.add_space(12.0); ui.separator(); ui.heading("TeleOp controller");
+            let controller_options = self.gamepad.as_ref().map(|gilrs| {
+                gilrs.gamepads()
+                    .filter(|(_, gamepad)| gamepad.is_connected())
+                    .map(|(id, gamepad)| (id, format!("{} (ID {:?})", gamepad.name(), id)))
+                    .collect::<Vec<_>>()
+            }).unwrap_or_default();
+            if controller_options.is_empty() {
+                ui.label("No controllers detected.");
+            } else {
+                let selected_label = self.selected_gamepad
+                    .and_then(|selected| controller_options.iter().find(|(id, _)| *id == selected).map(|(_, name)| name.clone()))
+                    .unwrap_or_else(|| "Select controller".to_owned());
+                egui::ComboBox::from_id_salt("controller_select")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        for (id, name) in &controller_options {
+                            if ui.selectable_label(self.selected_gamepad == Some(*id), name).clicked() {
+                                self.selected_gamepad = Some(*id);
+                                self.previous_gamepad_buttons.clear();
+                                self.stick_forward = 0.0;
+                                self.stick_strafe = 0.0;
+                                self.stick_turn = 0.0;
+                            }
+                        }
+                    });
+            }
             ui.label(&self.controller_status);
             ui.label("Left stick: robot-relative forward / strafe");
             ui.label("Right stick X: rotate");
