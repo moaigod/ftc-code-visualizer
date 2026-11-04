@@ -9,6 +9,7 @@ const MAX_SPEED_IN_S: f32 = 48.0;
 const MAX_TURN_DEG_S: f32 = 180.0;
 const MAX_POLLEN: u8 = 4;
 const POLLEN_RADIUS_IN: f32 = 1.4;
+const NECTAR_RADIUS_IN: f32 = 1.8;
 const SHOT_FLIGHT_SECONDS: f32 = 0.72;
 const FLOWER_INTAKE_COOLDOWN_SECONDS: f32 = 0.5;
 const HIVE_STARTING_NECTAR: u8 = 3;
@@ -20,12 +21,16 @@ const HIVE_BLUE_CENTER: (f32, f32) = (81.4, 72.0);
 const HIVE_CELL_HALF_WIDTH_IN: f32 = 10.0;
 const HIVE_CELL_HALF_DEPTH_IN: f32 = 7.0;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ElementKind { Pollen, Nectar }
+
 #[derive(Clone, Copy, Debug)]
 struct Pollen {
     x: f32,
     y: f32,
     radius: f32,
     from_flower: bool,
+    kind: ElementKind,
     vx: f32,
     vy: f32,
 }
@@ -37,6 +42,7 @@ struct PollenProjectile {
     vx: f32,
     vy: f32,
     elapsed: f32,
+    kind: ElementKind,
 }
 
 pub struct VisualizerApp {
@@ -49,7 +55,7 @@ pub struct VisualizerApp {
     gamepad: Option<Gilrs>, controller_status: String,
     stick_forward: f32, stick_strafe: f32, stick_turn: f32,
     forward_velocity: f32, strafe_velocity: f32, turn_velocity: f32,
-    pollen_count: u8,
+    carried_elements: Vec<ElementKind>,
     field_pollen: Vec<Pollen>,
     pollen_projectile: Option<PollenProjectile>,
     pollen_status: String,
@@ -86,7 +92,7 @@ impl Default for VisualizerApp {
             import_status: "No FTC project loaded.".to_owned(),
             gamepad, controller_status, stick_forward: 0.0, stick_strafe: 0.0, stick_turn: 0.0,
             forward_velocity: 0.0, strafe_velocity: 0.0, turn_velocity: 0.0,
-            pollen_count: MAX_POLLEN,
+            carried_elements: vec![ElementKind::Pollen; MAX_POLLEN as usize],
             field_pollen: starting_field_pollen(),
             pollen_projectile: None,
             pollen_status: "4 preloaded pollen onboard.".to_owned(),
@@ -241,111 +247,61 @@ impl VisualizerApp {
     }
 
     fn intake_pollen(&mut self) {
-        if self.pollen_count >= MAX_POLLEN {
-            self.pollen_status = "Robot is full (4/4 pollen).".to_owned();
-            return;
+        if self.carried_elements.len() >= MAX_POLLEN as usize {
+            self.pollen_status = "Robot is full (4/4 total elements).".to_owned(); return;
         }
-
-        // Test pollen against the actual orange intake rectangle in robot-local
-        // coordinates. Pollen must physically overlap the rectangle; proximity
-        // elsewhere near the robot is not enough.
-        let heading = self.heading_deg.to_radians();
-        let right = (heading.cos(), heading.sin());
-        let forward = (heading.sin(), heading.cos());
-        let half_width = 5.8_f32;
-        let intake_front = 9.8_f32;
-        let intake_back = 8.0_f32;
-
-        let nearest = self.field_pollen.iter().enumerate()
-            .filter_map(|(i, pollen)| {
-                let dx = pollen.x - self.robot_x;
-                let dy = pollen.y - self.robot_y;
-                let local_x = dx * right.0 + dy * right.1;
-                let local_y = dx * forward.0 + dy * forward.1;
-                let closest_x = local_x.clamp(-half_width, half_width);
-                let closest_y = local_y.clamp(intake_back, intake_front);
-                let distance = (local_x - closest_x).hypot(local_y - closest_y);
-                (distance <= pollen.radius).then_some((i, distance))
-            })
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-
-        if let Some((index, _)) = nearest {
-            let pollen = self.field_pollen[index];
-            let in_red_hive = (pollen.x - HIVE_RED_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
-                && (pollen.y - HIVE_RED_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
-            let in_blue_hive = (pollen.x - HIVE_BLUE_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
-                && (pollen.y - HIVE_BLUE_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
-            if (in_red_hive && !self.red_hive_tipped) || (in_blue_hive && !self.blue_hive_tipped) {
-                self.pollen_status = "Hive pollen is inaccessible until that hive tips.".to_owned();
-                return;
+        let h = self.heading_deg.to_radians();
+        let nearest = self.field_pollen.iter().enumerate().filter_map(|(i, e)| {
+            let dx=e.x-self.robot_x; let dy=e.y-self.robot_y;
+            let lx=dx*h.cos()+dy*h.sin(); let ly=dx*h.sin()+dy*h.cos();
+            let cx=lx.clamp(-5.8,5.8); let cy=ly.clamp(8.0,9.8);
+            let d=(lx-cx).hypot(ly-cy);
+            (d<=e.radius).then_some((i,d))
+        }).min_by(|a,b| a.1.total_cmp(&b.1));
+        if let Some((i,_))=nearest {
+            let e=self.field_pollen[i];
+            let red=(e.x-HIVE_RED_CENTER.0).abs()<=HIVE_CELL_HALF_WIDTH_IN && (e.y-HIVE_RED_CENTER.1).abs()<=HIVE_CELL_HALF_DEPTH_IN;
+            let blue=(e.x-HIVE_BLUE_CENTER.0).abs()<=HIVE_CELL_HALF_WIDTH_IN && (e.y-HIVE_BLUE_CENTER.1).abs()<=HIVE_CELL_HALF_DEPTH_IN;
+            if (red&&!self.red_hive_tipped)||(blue&&!self.blue_hive_tipped) {
+                self.pollen_status="Hive elements are inaccessible until that hive tips.".to_owned(); return;
             }
-            if pollen.from_flower && self.flower_intake_cooldown > 0.0 {
-                self.pollen_status = format!("Flower intake cooling down: {:.1}s.", self.flower_intake_cooldown);
-                return;
+            if e.from_flower && self.flower_intake_cooldown>0.0 {
+                self.pollen_status=format!("Flower intake cooling down: {:.1}s.",self.flower_intake_cooldown); return;
             }
-            self.field_pollen.remove(index);
-            self.pollen_count += 1;
-            if pollen.from_flower {
-                self.flower_intake_cooldown = FLOWER_INTAKE_COOLDOWN_SECONDS;
-            }
-            self.pollen_status = format!("Pollen collected: {}/4 onboard.", self.pollen_count);
-        } else {
-            self.pollen_status = "No pollen is touching the intake.".to_owned();
-        }
+            self.field_pollen.remove(i);
+            self.carried_elements.push(e.kind);
+            if e.from_flower { self.flower_intake_cooldown=FLOWER_INTAKE_COOLDOWN_SECONDS; }
+            let name=match e.kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
+            self.pollen_status=format!("{name} collected. Carrying {}/4 total elements.",self.carried_elements.len());
+        } else { self.pollen_status="No scoring element is touching the intake.".to_owned(); }
     }
 
     fn shoot_pollen(&mut self) {
-        let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i)).map(|m| m.source.as_str()).unwrap_or("");
-        let program = crate::ftc_interpreter::interpret(source);
-        let has_intake = program.motors.iter().any(|m| matches!(&m.role, crate::ftc_interpreter::MotorRole::Intake));
-        let has_feeder = program.motors.iter().any(|m| matches!(&m.role, crate::ftc_interpreter::MotorRole::Feeder));
-        if has_intake && !self.intake_running {
-            self.pollen_status = "Shot blocked: activate the detected intake first.".to_owned();
-            return;
-        }
-        if has_feeder && !self.feeder_running {
-            self.pollen_status = "Shot blocked: activate the detected feeder first.".to_owned();
-            return;
-        }
-        if self.pollen_count == 0 {
-            self.pollen_status = "No pollen onboard to shoot.".to_owned();
-            return;
-        }
-        if self.pollen_projectile.is_some() || self.shot_cooldown > 0.0 {
-            return;
-        }
-        let target = self.flywheel_target_velocity;
-        if target <= 0.0 {
-            self.pollen_status = "No positive setVelocity() target was resolved from the selected OpMode.".to_owned();
-            return;
-        }
-        let minimum_shot_velocity = (target * 0.25).max(100.0);
-        if self.flywheel_velocity < minimum_shot_velocity {
-            self.pollen_status = format!("Flywheel spinning up: {:.0}/{:.0} ticks/s (shots become available at {:.0}).", self.flywheel_velocity, target, minimum_shot_velocity);
-            return;
-        }
-
-        // Projectile speed follows the flywheel's actual speed, not its requested maximum.
-        let speed = (self.flywheel_velocity * self.shooter_velocity_scale).clamp(3.0, 100.0);
-        // A repeatable small spread makes shots look imperfect without adding random misses.
-        // Every shot still creates a projectile and lands somewhere on the field.
-        const SPREAD_DEGREES: [f32; 7] = [-2.2, 1.1, 2.0, -0.8, 0.4, -1.5, 1.6];
-        let spread = SPREAD_DEGREES[self.shot_sequence as usize % SPREAD_DEGREES.len()].to_radians();
-        self.shot_sequence = self.shot_sequence.wrapping_add(1);
-        let launch_heading = self.heading_deg.to_radians() + spread;
-        let heading = self.heading_deg.to_radians();
-        let launch_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 1.0);
-        let launch_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 1.0);
-        self.pollen_projectile = Some(PollenProjectile {
-            x: launch_x, y: launch_y,
-            vx: launch_heading.sin() * speed, vy: launch_heading.cos() * speed,
-            elapsed: 0.0,
-        });
-        self.pollen_count -= 1;
-        let velocity_loss_fraction = (0.30 + (target / 3000.0) * 0.20).clamp(0.30, 0.55);
-        self.flywheel_velocity *= 1.0 - velocity_loss_fraction;
-        self.shot_cooldown = 0.28;
-        self.pollen_status = format!("Pollen fired at an estimated {:.1} in/s. Flywheel recovering.", speed);
+        let source=self.selected_op_mode.and_then(|i|self.op_modes.get(i)).map(|m|m.source.as_str()).unwrap_or("");
+        let program=crate::ftc_interpreter::interpret(source);
+        let has_intake=program.motors.iter().any(|m|matches!(&m.role,crate::ftc_interpreter::MotorRole::Intake));
+        let has_feeder=program.motors.iter().any(|m|matches!(&m.role,crate::ftc_interpreter::MotorRole::Feeder));
+        if has_intake&&!self.intake_running {self.pollen_status="Shot blocked: activate the detected intake first.".to_owned();return;}
+        if has_feeder&&!self.feeder_running {self.pollen_status="Shot blocked: activate the detected feeder first.".to_owned();return;}
+        if self.carried_elements.is_empty() {self.pollen_status="No scoring elements onboard to shoot.".to_owned();return;}
+        if self.pollen_projectile.is_some()||self.shot_cooldown>0.0{return;}
+        let target=self.flywheel_target_velocity;
+        if target<=0.0 {self.pollen_status="No positive setVelocity() target was resolved from the selected OpMode.".to_owned();return;}
+        let min=(target*0.25).max(100.0);
+        if self.flywheel_velocity<min {self.pollen_status=format!("Flywheel spinning up: {:.0}/{:.0} ticks/s (shots become available at {:.0}).",self.flywheel_velocity,target,min);return;}
+        // FIFO: the first collected element is the first one launched.
+        let kind=self.carried_elements.remove(0);
+        const SPREAD:[f32;7]=[-2.2,1.1,2.0,-0.8,0.4,-1.5,1.6];
+        let spread=SPREAD[self.shot_sequence as usize%SPREAD.len()].to_radians();
+        self.shot_sequence=self.shot_sequence.wrapping_add(1);
+        let heading=self.heading_deg.to_radians();
+        let launch=heading+spread;
+        let speed=(self.flywheel_velocity*self.shooter_velocity_scale).clamp(3.0,100.0);
+        self.pollen_projectile=Some(PollenProjectile{x:self.robot_x+heading.sin()*(ROBOT_SIZE_IN*0.5+1.0),y:self.robot_y+heading.cos()*(ROBOT_SIZE_IN*0.5+1.0),vx:launch.sin()*speed,vy:launch.cos()*speed,elapsed:0.0,kind});
+        let loss=(0.30+(target/3000.0)*0.20).clamp(0.30,0.55);
+        self.flywheel_velocity*=1.0-loss; self.shot_cooldown=0.28;
+        let name=match kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
+        self.pollen_status=format!("{name} fired FIFO. {} element(s) remain.",self.carried_elements.len());
     }
 
     fn update_loose_pollen_physics(&mut self, dt: f32) {
@@ -524,12 +480,13 @@ impl VisualizerApp {
                     y: projectile.y.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
                     radius: POLLEN_RADIUS_IN,
                     from_flower: false,
+                    kind: projectile.kind,
                     vx: projectile.vx * 0.18,
                     vy: projectile.vy * 0.18,
                 };
                 self.field_pollen.push(landed);
                 self.pollen_projectile = None;
-                self.pollen_status = format!("Pollen landed back on the field. {}/4 onboard.", self.pollen_count);
+                self.pollen_status = format!("{} landed back on the field. {} element(s) onboard.", match projectile.kind { ElementKind::Pollen => "Pollen", ElementKind::Nectar => "Nectar" }, self.carried_elements.len());
             } else {
                 self.pollen_projectile = Some(projectile);
             }
@@ -552,7 +509,7 @@ impl VisualizerApp {
                 return format!("{:.1} in", self.robot_y);
             }
             "runtime" | "elapsedtime" | "elapsed_seconds" => return format!("{:.2} s", self.elapsed_seconds),
-            "pollen" | "pollencount" | "pollen_count" | "robot.pollen" => return format!("{}/4", self.pollen_count),
+            "pollen" | "pollencount" | "pollen_count" | "robot.pollen" => return format!("{}/4 total elements", self.carried_elements.len()),
             "shootervelocity" | "shooter_velocity" | "outtaker.getvelocity()" | "shooter.getvelocity()" => {
                 return self.detected_shooter_command()
                     .map(|(kind, value)| format!("{kind}: {value}"))
@@ -705,8 +662,9 @@ impl VisualizerApp {
                 field.bottom() - pollen.y * scale,
             );
             let radius = pollen.radius * scale;
-            painter.circle_filled(position, radius, Color32::from_rgb(255, 218, 35));
-            painter.circle_stroke(position, radius, Stroke::new(1.0_f32, Color32::from_rgb(120, 92, 0)));
+            let color=match pollen.kind {ElementKind::Pollen=>Color32::from_rgb(255,218,35),ElementKind::Nectar=>Color32::from_rgb(80,190,255)};
+            painter.circle_filled(position,radius,color);
+            painter.circle_stroke(position,radius,Stroke::new(1.0_f32,Color32::from_rgb(65,75,90)));
         }
 
         if let Some(projectile) = self.pollen_projectile {
@@ -716,8 +674,10 @@ impl VisualizerApp {
                 field.left() + projectile.x * scale,
                 field.bottom() - projectile.y * scale - arc_height * scale,
             );
-            painter.circle_filled(position, POLLEN_RADIUS_IN * scale, Color32::from_rgb(255, 235, 90));
-            painter.circle_stroke(position, POLLEN_RADIUS_IN * scale, Stroke::new(1.2_f32, Color32::WHITE));
+            let radius=match projectile.kind {ElementKind::Pollen=>POLLEN_RADIUS_IN,ElementKind::Nectar=>NECTAR_RADIUS_IN};
+            let color=match projectile.kind {ElementKind::Pollen=>Color32::from_rgb(255,235,90),ElementKind::Nectar=>Color32::from_rgb(100,205,255)};
+            painter.circle_filled(position,radius*scale,color);
+            painter.circle_stroke(position,radius*scale,Stroke::new(1.2_f32,Color32::WHITE));
         }
 
         let center = Pos2::new(field.left() + self.robot_x * scale, field.bottom() - self.robot_y * scale);
@@ -823,16 +783,22 @@ fn starting_field_pollen() -> Vec<Pollen> {
     ];
     for (x, y) in flower_positions {
         for radius in flower_radii {
-            pollen.push(Pollen { x, y, radius, from_flower: true, vx: 0.0, vy: 0.0 });
+            pollen.push(Pollen { x, y, radius, from_flower: true, kind: ElementKind::Pollen, vx: 0.0, vy: 0.0 });
         }
     }
 
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
-        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, vx: 0.0, vy: 0.0 });
-        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, vx: 0.0, vy: 0.0 });
+        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, vx: 0.0, vy: 0.0 });
+        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, vx: 0.0, vy: 0.0 });
     }
 
+    // Five Nectar pieces in each alliance area (3.6-inch diameter).
+    for i in 0..5 {
+        let offset=i as f32*5.0;
+        pollen.push(Pollen{x:18.0+offset,y:18.0,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,vx:0.0,vy:0.0});
+        pollen.push(Pollen{x:FIELD_SIZE_IN-18.0-offset,y:FIELD_SIZE_IN-18.0,radius:NECTAR_RADIUS_IN,from_flower:false,kind:ElementKind::Nectar,vx:0.0,vy:0.0});
+    }
     pollen
 }
 
@@ -932,7 +898,11 @@ impl eframe::App for VisualizerApp {
             ui.add_space(8.0);
             ui.separator();
             ui.heading("Pollen");
-            ui.strong(format!("Carrying: {}/4", self.pollen_count));
+            ui.strong(format!("Carrying: {}/4", self.carried_elements.len()));
+            let pc=self.carried_elements.iter().filter(|&&k|k==ElementKind::Pollen).count();
+            let nc=self.carried_elements.iter().filter(|&&k|k==ElementKind::Nectar).count();
+            ui.label(format!("Pollen: {pc} · Nectar: {nc}"));
+            ui.label(format!("Shoot order: {}",self.carried_elements.iter().map(|k|match k{ElementKind::Pollen=>"P",ElementKind::Nectar=>"N"}).collect::<Vec<_>>().join(" → ")));
             ui.label(format!("Flywheel: {:.0}/{:.0} ticks/s", self.flywheel_velocity, self.flywheel_target_velocity));
             ui.add(egui::Slider::new(&mut self.shooter_velocity_scale, 0.005..=0.06).text("Shooter calibration (in/s per tick/s)"));
             ui.label(format!("Intake: {} · Feeder: {}", if self.intake_running { "active" } else { "off" }, if self.feeder_running { "active" } else { "off" }));
