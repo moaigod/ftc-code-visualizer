@@ -251,6 +251,9 @@ impl VisualizerApp {
         }
 
         if key.contains(".getvelocity()") {
+            if key.contains("outtaker") || key.contains("shooter") {
+                return format!("{:.0} rpm (simulated)", self.shooter_motor_power * 6000.0);
+            }
             let motor = key.split('.').next().unwrap_or("");
             let index = if motor.contains("frontleft") { Some(0) }
                 else if motor.contains("frontright") { Some(1) }
@@ -260,6 +263,9 @@ impl VisualizerApp {
             return format!("{} (no matching simulated motor)", expression);
         }
         if key.contains(".getpower()") {
+            if key.contains("outtaker") || key.contains("shooter") {
+                return format!("{:.2}", self.shooter_motor_power);
+            }
             let motor = key.split('.').next().unwrap_or("");
             let index = if motor.contains("frontleft") { Some(0) }
                 else if motor.contains("frontright") { Some(1) }
