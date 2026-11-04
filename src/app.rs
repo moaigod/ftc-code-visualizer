@@ -685,7 +685,14 @@ impl VisualizerApp {
                 field.bottom() - pollen.y * scale,
             );
             let radius = pollen.radius * scale;
-            let color=match pollen.kind {ElementKind::Pollen=>Color32::from_rgb(255,218,35),ElementKind::Nectar=>Color32::from_rgb(80,190,255)};
+            let color = match pollen.kind {
+                ElementKind::Pollen => Color32::from_rgb(255, 218, 35),
+                ElementKind::Nectar => match pollen.hive {
+                    Some(HiveSide::Red) => Color32::from_rgb(235, 55, 65),
+                    Some(HiveSide::Blue) => Color32::from_rgb(55, 125, 245),
+                    None => Color32::from_rgb(185, 195, 210),
+                },
+            };
             painter.circle_filled(position,radius,color);
             painter.circle_stroke(position,radius,Stroke::new(1.0_f32,Color32::from_rgb(65,75,90)));
         }
@@ -894,19 +901,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
         });
     }
 
-    // Five additional Nectar pieces in each alliance area (3.6-inch diameter).
-    for i in 0..5 {
-        let offset = i as f32 * 5.0;
-        pollen.push(Pollen {
-            x: 18.0 + offset, y: 18.0, radius: NECTAR_RADIUS_IN,
-            from_flower: false, kind: ElementKind::Nectar, hive: None, vx: 0.0, vy: 0.0,
-        });
-        pollen.push(Pollen {
-            x: FIELD_SIZE_IN - 18.0 - offset, y: FIELD_SIZE_IN - 18.0,
-            radius: NECTAR_RADIUS_IN, from_flower: false, kind: ElementKind::Nectar, hive: None,
-            vx: 0.0, vy: 0.0,
-        });
-    }
+    // Nectar is staged only inside the two hives; no extra pieces spawn in the alliance areas.
     pollen
 }
 
