@@ -19,7 +19,7 @@ const HIVE_POLLEN_LOAD_UNITS: f32 = 1.0;
 const HIVE_RED_CENTER: (f32, f32) = (57.0, 57.0);
 const HIVE_BLUE_CENTER: (f32, f32) = (84.0, 84.0);
 const HIVE_CELL_HALF_WIDTH_IN: f32 = 11.0;
-const HIVE_CELL_HALF_DEPTH_IN: f32 = 11.0;
+const HIVE_CELL_HALF_DEPTH_IN: f32 = 7.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ElementKind { Pollen, Nectar }
@@ -795,11 +795,10 @@ fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> 
 fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: HiveSide, tipped: bool) {
     if tipped { return; }
 
-    let half = HIVE_CELL_HALF_WIDTH_IN;
-    let min_x = center.0 - half;
-    let max_x = center.0 + half;
-    let min_y = center.1 - half;
-    let max_y = center.1 + half;
+    let min_x = center.0 - HIVE_CELL_HALF_WIDTH_IN;
+    let max_x = center.0 + HIVE_CELL_HALF_WIDTH_IN;
+    let min_y = center.1 - HIVE_CELL_HALF_DEPTH_IN;
+    let max_y = center.1 + HIVE_CELL_HALF_DEPTH_IN;
 
     if element.hive == Some(side) {
         // The three preloaded Nectar pieces remain physically loose inside
