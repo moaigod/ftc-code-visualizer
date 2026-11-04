@@ -46,7 +46,7 @@ pub struct VisualizerApp {
     pollen_status: String,
     drive_wheel_power: [f32; 4],
     drive_wheel_velocity: [f32; 4],
-    motor_names: [String; 5],
+    motor_names: [String; 4],
     previous_gamepad_buttons: Vec<String>,
     flower_intake_cooldown: f32,
 }
@@ -77,7 +77,6 @@ impl Default for VisualizerApp {
                 "frontRight".to_owned(),
                 "backLeft".to_owned(),
                 "backRight".to_owned(),
-                String::new(),
             ],
             previous_gamepad_buttons: Vec::new(),
             flower_intake_cooldown: 0.0,
@@ -187,10 +186,8 @@ impl VisualizerApp {
     }
 
     fn detected_shooter_command(&self) -> Option<(String, String)> {
-        let name = self.motor_names[4].trim();
-        if name.is_empty() { return None; }
         let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i))?.source.as_str();
-        find_motor_command(source, name)
+        find_outtake_commands(source).into_iter().next().map(|(_, _, kind, value)| (kind, value))
     }
 
     fn detected_shooter_power(&self) -> Option<f32> {
@@ -241,7 +238,7 @@ impl VisualizerApp {
         }
 
         let Some((command, value)) = self.detected_shooter_command() else {
-            self.pollen_status = "No shooter command found. Set the Shooter motor name and select an OpMode.".to_owned();
+            self.pollen_status = "No outtake motor command found. Select an OpMode with OuttakeL/OuttakeR commands.".to_owned();
             return;
         };
         let Some(command_value) = value.trim().parse::<f32>().ok() else {
@@ -560,38 +557,61 @@ fn find_defined_motors(source: &str) -> Vec<(String, String)> {
     motors
 }
 
-fn find_motor_command(source: &str, motor_name: &str) -> Option<(String, String)> {
+fn find_motor_commands(source: &str, motor_name: &str) -> Vec<(String, String)> {
+    let mut commands = Vec::new();
     for method in ["setVelocity", "setPower"] {
-        let pattern = format!("{motor_name}.{method}");
         let mut search_from = 0;
-        while let Some(relative) = source[search_from..].find(&pattern) {
-            let start = search_from + relative + pattern.len();
-            let after = source[start..].trim_start();
-            if let Some(args) = after.strip_prefix('(') {
-                let mut depth = 1_i32;
-                let mut end = None;
-                for (index, character) in args.char_indices() {
-                    match character {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 { end = Some(index); break; }
+        while let Some(relative) = source[search_from..].find(motor_name) {
+            let name_end = search_from + relative + motor_name.len();
+            let line_end = source[name_end..].find(';').map(|i| name_end + i).unwrap_or(source.len());
+            let statement = &source[name_end..line_end];
+            if let Some(method_pos) = statement.find(&format!(".{method}")) {
+                let after_method = statement[method_pos + method.len() + 1..].trim_start();
+                if let Some(args) = after_method.strip_prefix('(') {
+                    let mut depth = 1_i32;
+                    let mut end = None;
+                    for (index, character) in args.char_indices() {
+                        match character {
+                            '(' => depth += 1,
+                            ')' => {
+                                depth -= 1;
+                                if depth == 0 { end = Some(index); break; }
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
-                }
-                if let Some(end) = end {
-                    let expression = args[..end].trim();
-                    if !expression.is_empty() {
-                        return Some((method.to_owned(), expression.to_owned()));
+                    if let Some(end) = end {
+                        let value = args[..end].trim().to_owned();
+                        if !value.is_empty() && !commands.iter().any(|(k, v)| k == method && v == &value) {
+                            commands.push((method.to_owned(), value));
+                        }
                     }
                 }
             }
-            search_from = start;
+            search_from = name_end;
             if search_from >= source.len() { break; }
         }
     }
-    None
+    commands
+}
+
+fn find_motor_command(source: &str, motor_name: &str) -> Option<(String, String)> {
+    find_motor_commands(source, motor_name).into_iter().next()
+}
+
+fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> {
+    let mut results = Vec::new();
+    for (variable, hardware_name) in find_defined_motors(source) {
+        let name = variable.to_ascii_lowercase();
+        let hardware = hardware_name.to_ascii_lowercase();
+        if !(name.contains("outtake") || name.contains("shooter") || hardware.contains("outtake") || hardware.contains("shooter")) {
+            continue;
+        }
+        for (kind, value) in find_motor_commands(source, &variable) {
+            results.push((variable.clone(), hardware_name.clone(), kind, value));
+        }
+    }
+    results
 }
 
 fn starting_field_pollen() -> Vec<Pollen> {
@@ -718,20 +738,28 @@ impl eframe::App for VisualizerApp {
             ui.heading("Pollen");
             ui.strong(format!("Carrying: {}/4", self.pollen_count));
             ui.label(&self.pollen_status);
-            ui.collapsing("Motor name mapping (match your code variables)", |ui| {
-                for (label, index) in [("Front left", 0), ("Front right", 1), ("Back left", 2), ("Back right", 3), ("Shooter", 4)] {
+            ui.collapsing("Drive motor name mapping (match your code variables)", |ui| {
+                for (label, index) in [("Front left", 0), ("Front right", 1), ("Back left", 2), ("Back right", 3)] {
                     ui.horizontal(|ui| {
                         ui.label(label);
                         ui.add(egui::TextEdit::singleline(&mut self.motor_names[index]).desired_width(130.0));
                     });
                 }
             });
-            if let Some((kind, value)) = self.detected_shooter_command() {
-                ui.label(format!("Shooter command found: {kind}({value})"));
+            if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
+                let outtakes = find_outtake_commands(&mode.source);
+                if outtakes.is_empty() {
+                    ui.label("No outtake motor commands detected. Expected names such as OuttakeL / OuttakeR.");
+                } else {
+                    ui.label("Automatically detected outtake motors:");
+                    for (variable, hardware, kind, value) in outtakes {
+                        ui.label(format!("{variable} (hardware \"{hardware}\"): {kind}({value})"));
+                    }
+                }
             } else {
-                ui.label("No shooter setPower()/setVelocity() command found in the selected OpMode.");
+                ui.label("Select an OpMode to detect outtake motors automatically.");
             }
-            ui.label("Shooter velocity is read from the selected OpMode; physical projectile speed needs wheel/gearing calibration.");
+            ui.label("Outtake commands are read from the selected OpMode. Projectile speed still requires wheel/gearing calibration.");
             ui.horizontal(|ui| {
                 if ui.button("Intake pollen [E]").clicked() {
                     self.intake_pollen();
@@ -772,17 +800,6 @@ impl eframe::App for VisualizerApp {
                             } else {
                                 ui.label(format!("{variable} → hardware \"{hardware_name}\": defined, no setPower()/setVelocity() call found in this file"));
                             }
-                        }
-                    }
-                    ui.separator();
-                    ui.label("Manual name mappings:");
-                    for (label, index) in [("Front left", 0), ("Front right", 1), ("Back left", 2), ("Back right", 3), ("Shooter", 4)] {
-                        let name = self.motor_names[index].trim();
-                        if name.is_empty() { continue; }
-                        if let Some((kind, value)) = find_motor_command(&mode.source, name) {
-                            ui.label(format!("{label} ({name}): {kind}({value})"));
-                        } else {
-                            ui.label(format!("{label} ({name}): no setPower()/setVelocity() found"));
                         }
                     }
                 } else {
