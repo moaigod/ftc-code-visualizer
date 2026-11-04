@@ -40,6 +40,12 @@ struct Pollen {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct CarriedElement {
+    kind: ElementKind,
+    hive: Option<HiveSide>,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct PollenProjectile {
     x: f32,
     y: f32,
@@ -47,6 +53,7 @@ struct PollenProjectile {
     vy: f32,
     elapsed: f32,
     kind: ElementKind,
+    hive: Option<HiveSide>,
 }
 
 pub struct VisualizerApp {
@@ -59,7 +66,7 @@ pub struct VisualizerApp {
     gamepad: Option<Gilrs>, selected_gamepad: Option<gilrs::GamepadId>, controller_status: String,
     stick_forward: f32, stick_strafe: f32, stick_turn: f32,
     forward_velocity: f32, strafe_velocity: f32, turn_velocity: f32,
-    carried_elements: Vec<ElementKind>,
+    carried_elements: Vec<CarriedElement>,
     field_pollen: Vec<Pollen>,
     pollen_projectile: Option<PollenProjectile>,
     pollen_status: String,
@@ -98,7 +105,7 @@ impl Default for VisualizerApp {
             import_status: "No FTC project loaded.".to_owned(),
             gamepad, selected_gamepad: None, controller_status, stick_forward: 0.0, stick_strafe: 0.0, stick_turn: 0.0,
             forward_velocity: 0.0, strafe_velocity: 0.0, turn_velocity: 0.0,
-            carried_elements: vec![ElementKind::Pollen; MAX_POLLEN as usize],
+            carried_elements: vec![CarriedElement { kind: ElementKind::Pollen, hive: None }; MAX_POLLEN as usize],
             field_pollen: starting_field_pollen(),
             pollen_projectile: None,
             pollen_status: "4 preloaded pollen onboard.".to_owned(),
@@ -272,16 +279,15 @@ impl VisualizerApp {
         }).min_by(|a,b| a.1.total_cmp(&b.1));
         if let Some((i,_))=nearest {
             let e=self.field_pollen[i];
-            let red=(e.x-HIVE_RED_CENTER.0).abs()<=HIVE_CELL_HALF_WIDTH_IN && (e.y-HIVE_RED_CENTER.1).abs()<=HIVE_CELL_HALF_DEPTH_IN;
-            let blue=(e.x-HIVE_BLUE_CENTER.0).abs()<=HIVE_CELL_HALF_WIDTH_IN && (e.y-HIVE_BLUE_CENTER.1).abs()<=HIVE_CELL_HALF_DEPTH_IN;
-            if (red&&!self.red_hive_tipped)||(blue&&!self.blue_hive_tipped) {
+            if matches!(e.hive, Some(HiveSide::Red)) && !self.red_hive_tipped
+                || matches!(e.hive, Some(HiveSide::Blue)) && !self.blue_hive_tipped {
                 self.pollen_status="Hive elements are inaccessible until that hive tips.".to_owned(); return;
             }
             if e.from_flower && self.flower_intake_cooldown>0.0 {
                 self.pollen_status=format!("Flower intake cooling down: {:.1}s.",self.flower_intake_cooldown); return;
             }
             self.field_pollen.remove(i);
-            self.carried_elements.push(e.kind);
+            self.carried_elements.push(CarriedElement { kind: e.kind, hive: e.hive });
             if e.from_flower { self.flower_intake_cooldown=FLOWER_INTAKE_COOLDOWN_SECONDS; }
             let name=match e.kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
             self.pollen_status=format!("{name} collected. Carrying {}/4 total elements.",self.carried_elements.len());
@@ -302,14 +308,15 @@ impl VisualizerApp {
         let min=(target*0.25).max(100.0);
         if self.flywheel_velocity<min {self.pollen_status=format!("Flywheel spinning up: {:.0}/{:.0} ticks/s (shots become available at {:.0}).",self.flywheel_velocity,target,min);return;}
         // FIFO: the first collected element is the first one launched.
-        let kind=self.carried_elements.remove(0);
+        let cargo=self.carried_elements.remove(0);
+        let kind=cargo.kind;
         const SPREAD:[f32;7]=[-2.2,1.1,2.0,-0.8,0.4,-1.5,1.6];
         let spread=SPREAD[self.shot_sequence as usize%SPREAD.len()].to_radians();
         self.shot_sequence=self.shot_sequence.wrapping_add(1);
         let heading=self.heading_deg.to_radians();
         let launch=heading+spread;
         let speed=(self.flywheel_velocity*self.shooter_velocity_scale).clamp(3.0,100.0);
-        self.pollen_projectile=Some(PollenProjectile{x:self.robot_x+heading.sin()*(ROBOT_SIZE_IN*0.5+1.0),y:self.robot_y+heading.cos()*(ROBOT_SIZE_IN*0.5+1.0),vx:launch.sin()*speed,vy:launch.cos()*speed,elapsed:0.0,kind});
+        self.pollen_projectile=Some(PollenProjectile{x:self.robot_x+heading.sin()*(ROBOT_SIZE_IN*0.5+1.0),y:self.robot_y+heading.cos()*(ROBOT_SIZE_IN*0.5+1.0),vx:launch.sin()*speed,vy:launch.cos()*speed,elapsed:0.0,kind,hive:cargo.hive});
         let loss=(0.30+(target/3000.0)*0.20).clamp(0.30,0.55);
         self.flywheel_velocity*=1.0-loss; self.shot_cooldown=0.28;
         let name=match kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
@@ -337,6 +344,13 @@ impl VisualizerApp {
 
             // Treat the robot as its actual rotated 18x18-inch square,
             // rather than a 12.73-inch-radius circle that overstates its hitbox.
+            // Nectar staged inside an untipped hive is behind the hive's
+            // scoring-only barrier; the robot chassis must pass through it.
+            let inside_untipped_hive =
+                matches!(pollen.hive, Some(HiveSide::Red)) && !self.red_hive_tipped
+                || matches!(pollen.hive, Some(HiveSide::Blue)) && !self.blue_hive_tipped;
+            if inside_untipped_hive { continue; }
+
             let dx = pollen.x - self.robot_x;
             let dy = pollen.y - self.robot_y;
             let local_x = dx * heading.cos() - dy * heading.sin();
@@ -450,16 +464,24 @@ impl VisualizerApp {
     fn update_pollen(&mut self, dt: f32) {
         if let Some(mut projectile) = self.pollen_projectile {
             projectile.elapsed += dt;
+            let previous_x = projectile.x;
+            let previous_y = projectile.y;
             projectile.x += projectile.vx * dt;
             projectile.y += projectile.vy * dt;
 
             // Calibrated tipping load: 8 pollen-equivalent units. Each Nectar is
             // weighted as 1.6 Pollen, so 3 starting Nectar + 4 Pollen tips;
             // 5 Nectar alone or 8 Pollen alone also reaches the threshold.
-            let in_red_cell = (projectile.x - HIVE_RED_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
-                && (projectile.y - HIVE_RED_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
-            let in_blue_cell = (projectile.x - HIVE_BLUE_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
-                && (projectile.y - HIVE_BLUE_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
+            // Test the entire movement segment, not only its endpoint, so a
+            // fast projectile cannot skip over a hive between simulation frames.
+            let in_red_cell = segment_intersects_rect(
+                (previous_x, previous_y), (projectile.x, projectile.y),
+                HIVE_RED_CENTER, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN,
+            );
+            let in_blue_cell = segment_intersects_rect(
+                (previous_x, previous_y), (projectile.x, projectile.y),
+                HIVE_BLUE_CENTER, HIVE_CELL_HALF_WIDTH_IN, HIVE_CELL_HALF_DEPTH_IN,
+            );
             if in_red_cell && !self.red_hive_tipped {
                 match projectile.kind {
                     ElementKind::Pollen => self.red_hive_pollen = self.red_hive_pollen.saturating_add(1),
@@ -507,7 +529,7 @@ impl VisualizerApp {
                     radius: match projectile.kind { ElementKind::Pollen => POLLEN_RADIUS_IN, ElementKind::Nectar => NECTAR_RADIUS_IN },
                     from_flower: false,
                     kind: projectile.kind,
-                    hive: None,
+                    hive: projectile.hive,
                     vx: projectile.vx * 0.18,
                     vy: projectile.vy * 0.18,
                 };
@@ -709,7 +731,14 @@ impl VisualizerApp {
                 field.bottom() - projectile.y * scale - arc_height * scale,
             );
             let radius=match projectile.kind {ElementKind::Pollen=>POLLEN_RADIUS_IN,ElementKind::Nectar=>NECTAR_RADIUS_IN};
-            let color=match projectile.kind {ElementKind::Pollen=>Color32::from_rgb(255,235,90),ElementKind::Nectar=>Color32::from_rgb(100,205,255)};
+            let color=match projectile.kind {
+                ElementKind::Pollen=>Color32::from_rgb(255,235,90),
+                ElementKind::Nectar=>match projectile.hive {
+                    Some(HiveSide::Red)=>Color32::from_rgb(235,55,65),
+                    Some(HiveSide::Blue)=>Color32::from_rgb(55,125,245),
+                    None=>Color32::from_rgb(185,195,210),
+                },
+            };
             painter.circle_filled(position,radius*scale,color);
             painter.circle_stroke(position,radius*scale,Stroke::new(1.2_f32,Color32::WHITE));
         }
@@ -800,6 +829,40 @@ fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> 
         matches!(&motor.role, crate::ftc_interpreter::MotorRole::Outtake)
             .then_some((motor.variable.clone(), motor.hardware_name.clone(), command.method, command.expression))
     }).collect()
+}
+
+fn segment_intersects_rect(
+    start: (f32, f32),
+    end: (f32, f32),
+    center: (f32, f32),
+    half_width: f32,
+    half_depth: f32,
+) -> bool {
+    // Liang-Barsky segment clipping against an axis-aligned hive cell.
+    let min_x = center.0 - half_width;
+    let max_x = center.0 + half_width;
+    let min_y = center.1 - half_depth;
+    let max_y = center.1 + half_depth;
+    let dx = end.0 - start.0;
+    let dy = end.1 - start.1;
+    let mut t_min: f32 = 0.0;
+    let mut t_max: f32 = 1.0;
+    for (p, q) in [
+        (-dx, start.0 - min_x),
+        ( dx, max_x - start.0),
+        (-dy, start.1 - min_y),
+        ( dy, max_y - start.1),
+    ] {
+        if p.abs() < f32::EPSILON {
+            if q < 0.0 { return false; }
+        } else {
+            let t = q / p;
+            if p < 0.0 { t_min = t_min.max(t); }
+            else { t_max = t_max.min(t); }
+            if t_min > t_max { return false; }
+        }
+    }
+    true
 }
 
 fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: HiveSide, tipped: bool) {
@@ -1032,10 +1095,10 @@ impl eframe::App for VisualizerApp {
             ui.separator();
             ui.heading("Pollen");
             ui.strong(format!("Carrying: {}/4", self.carried_elements.len()));
-            let pc=self.carried_elements.iter().filter(|&&k|k==ElementKind::Pollen).count();
-            let nc=self.carried_elements.iter().filter(|&&k|k==ElementKind::Nectar).count();
+            let pc=self.carried_elements.iter().filter(|item|item.kind==ElementKind::Pollen).count();
+            let nc=self.carried_elements.iter().filter(|item|item.kind==ElementKind::Nectar).count();
             ui.label(format!("Pollen: {pc} · Nectar: {nc}"));
-            ui.label(format!("Shoot order: {}",self.carried_elements.iter().map(|k|match k{ElementKind::Pollen=>"P",ElementKind::Nectar=>"N"}).collect::<Vec<_>>().join(" → ")));
+            ui.label(format!("Shoot order: {}",self.carried_elements.iter().map(|item|match item.kind{ElementKind::Pollen=>"P",ElementKind::Nectar=>"N"}).collect::<Vec<_>>().join(" → ")));
             ui.label(format!("Flywheel: {:.0}/{:.0} ticks/s", self.flywheel_velocity, self.flywheel_target_velocity));
             ui.add(egui::Slider::new(&mut self.shooter_velocity_scale, 0.005..=0.06).text("Shooter calibration (in/s per tick/s)"));
             ui.label(format!("Intake: {} · Feeder: {}", if self.intake_running { "active" } else { "off" }, if self.feeder_running { "active" } else { "off" }));
