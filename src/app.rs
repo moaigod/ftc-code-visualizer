@@ -317,8 +317,6 @@ impl VisualizerApp {
         // can be pushed by the robot instead of passing through its chassis.
         let robot_speed = self.forward_velocity.hypot(self.strafe_velocity);
         let heading = self.heading_deg.to_radians();
-        let robot_vx = self.strafe_velocity * heading.cos() + self.forward_velocity * heading.sin();
-        let robot_vy = -self.strafe_velocity * heading.sin() + self.forward_velocity * heading.cos();
         for pollen in &mut self.field_pollen {
             // Pollen that belongs to a flower stays anchored in its stack.
             if pollen.from_flower {
@@ -505,6 +503,7 @@ impl VisualizerApp {
                     radius: match projectile.kind { ElementKind::Pollen => POLLEN_RADIUS_IN, ElementKind::Nectar => NECTAR_RADIUS_IN },
                     from_flower: false,
                     kind: projectile.kind,
+                    hive: None,
                     vx: projectile.vx * 0.18,
                     vy: projectile.vy * 0.18,
                 };
@@ -877,7 +876,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
         pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
-        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, vx: 0.0, vy: 0.0 });
+        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, kind: ElementKind::Pollen, hive: None, vx: 0.0, vy: 0.0 });
     }
 
     // Three starting Nectar pieces inside each hive. The three positions
