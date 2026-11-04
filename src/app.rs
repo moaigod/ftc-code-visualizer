@@ -716,7 +716,7 @@ fn starting_field_pollen() -> Vec<Pollen> {
 
     // Each Flower has four overlapping pollen pieces. The progressively smaller
     // circles make the stack look like pollen being drawn into the intake.
-    let flower_radii = [1.4_f32, 1.05, 0.75, 0.45];
+    let flower_radii = [1.4_f32, 1.05, 0.75];
     let edge_offset = flower_radii[0];
     let flower_positions = [
         (96.5, edge_offset), // Bottom: move inward by the largest pollen radius
