@@ -363,8 +363,11 @@ impl VisualizerApp {
         }
         let scale = field.width() / FIELD_SIZE_IN;
 
-        // Field pollen: yellow balls at the manual's Flower and Garden staging areas.
-        for pollen in &self.field_pollen {
+        // Draw larger pollen first so the smaller Flower pieces are visibly layered
+        // on top of the larger pieces in each stack.
+        let mut pollen_draw_order = self.field_pollen.iter().collect::<Vec<_>>();
+        pollen_draw_order.sort_by(|a, b| b.radius.total_cmp(&a.radius));
+        for pollen in pollen_draw_order {
             let position = Pos2::new(
                 field.left() + pollen.x * scale,
                 field.bottom() - pollen.y * scale,
