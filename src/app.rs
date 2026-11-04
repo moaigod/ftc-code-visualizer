@@ -18,6 +18,8 @@ struct Pollen {
     y: f32,
     radius: f32,
     from_flower: bool,
+    vx: f32,
+    vy: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -322,6 +324,92 @@ impl VisualizerApp {
         self.pollen_status = format!("Pollen fired at an estimated {:.1} in/s. Flywheel recovering.", speed);
     }
 
+    fn update_loose_pollen_physics(&mut self, dt: f32) {
+        // Loose pollen has light inertia, floor friction, wall collisions, and
+        // can be pushed by the robot instead of passing through its chassis.
+        let robot_speed = self.forward_velocity.hypot(self.strafe_velocity);
+        let heading = self.heading_deg.to_radians();
+        let robot_vx = self.strafe_velocity * heading.cos() + self.forward_velocity * heading.sin();
+        let robot_vy = -self.strafe_velocity * heading.sin() + self.forward_velocity * heading.cos();
+        let robot_radius = 12.73_f32;
+
+        for pollen in &mut self.field_pollen {
+            pollen.x += pollen.vx * dt;
+            pollen.y += pollen.vy * dt;
+            let friction = (1.0 - 2.8 * dt).max(0.0);
+            pollen.vx *= friction;
+            pollen.vy *= friction;
+
+            let dx = pollen.x - self.robot_x;
+            let dy = pollen.y - self.robot_y;
+            let distance = dx.hypot(dy);
+            let minimum = robot_radius + pollen.radius;
+            if distance < minimum {
+                let (nx, ny) = if distance > 0.001 { (dx / distance, dy / distance) } else { (0.0, 1.0) };
+                let overlap = minimum - distance;
+                pollen.x += nx * overlap;
+                pollen.y += ny * overlap;
+                let push_speed = robot_speed.max(2.0);
+                pollen.vx = pollen.vx * 0.25 + nx * push_speed * 0.85;
+                pollen.vy = pollen.vy * 0.25 + ny * push_speed * 0.85;
+            }
+
+            let max_x = FIELD_SIZE_IN - pollen.radius;
+            let max_y = FIELD_SIZE_IN - pollen.radius;
+            if pollen.x < pollen.radius { pollen.x = pollen.radius; pollen.vx = pollen.vx.abs() * 0.35; }
+            if pollen.x > max_x { pollen.x = max_x; pollen.vx = -pollen.vx.abs() * 0.35; }
+            if pollen.y < pollen.radius { pollen.y = pollen.radius; pollen.vy = pollen.vy.abs() * 0.35; }
+            if pollen.y > max_y { pollen.y = max_y; pollen.vy = -pollen.vy.abs() * 0.35; }
+        }
+
+        // Resolve overlaps between loose pollen pieces with a soft, damped bounce.
+        for i in 0..self.field_pollen.len() {
+            for j in (i + 1)..self.field_pollen.len() {
+                let (left, right) = self.field_pollen.split_at_mut(j);
+                let a = &mut left[i];
+                let b = &mut right[0];
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+                let distance = dx.hypot(dy);
+                let minimum = a.radius + b.radius;
+                if distance > 0.001 && distance < minimum {
+                    let nx = dx / distance;
+                    let ny = dy / distance;
+                    let overlap = (minimum - distance) * 0.5;
+                    a.x -= nx * overlap; a.y -= ny * overlap;
+                    b.x += nx * overlap; b.y += ny * overlap;
+                    let relative = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+                    if relative > 0.0 {
+                        a.vx -= nx * relative * 0.55; a.vy -= ny * relative * 0.55;
+                        b.vx += nx * relative * 0.55; b.vy += ny * relative * 0.55;
+                    }
+                }
+            }
+        }
+    }
+
+    fn resolve_robot_wall_collisions(&mut self) {
+        // Keep the rotated chassis corners inside the 144-inch field. Correcting
+        // the center after each heading update makes the robot slide/push away
+        // from a wall while turning rather than rotating through it.
+        let h = self.heading_deg.to_radians();
+        let corners = [(-9.0_f32,-9.0_f32),(9.0,-9.0),(9.0,9.0),(-9.0,9.0)];
+        let mut min_x = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        for (x,y) in corners {
+            let wx = x * h.cos() + y * h.sin();
+            let wy = -x * h.sin() + y * h.cos();
+            min_x = min_x.min(wx); max_x = max_x.max(wx);
+            min_y = min_y.min(wy); max_y = max_y.max(wy);
+        }
+        self.robot_x += (9.0 - (self.robot_x + min_x)).max(0.0);
+        self.robot_x -= (self.robot_x + max_x - (FIELD_SIZE_IN - 9.0)).max(0.0);
+        self.robot_y += (9.0 - (self.robot_y + min_y)).max(0.0);
+        self.robot_y -= (self.robot_y + max_y - (FIELD_SIZE_IN - 9.0)).max(0.0);
+    }
+
     fn update_pollen(&mut self, dt: f32) {
         if let Some(mut projectile) = self.pollen_projectile {
             projectile.elapsed += dt;
@@ -339,6 +427,8 @@ impl VisualizerApp {
                     y: projectile.y.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
                     radius: POLLEN_RADIUS_IN,
                     from_flower: false,
+                    vx: projectile.vx * 0.18,
+                    vy: projectile.vy * 0.18,
                 };
                 self.field_pollen.push(landed);
                 self.pollen_projectile = None;
@@ -440,6 +530,7 @@ impl VisualizerApp {
             self.shoot_pollen();
         }
         self.update_pollen(dt);
+        self.update_loose_pollen_physics(dt);
         if self.pollen_projectile.is_some() || self.flower_intake_cooldown > 0.0 || self.intake_running || self.flywheel_velocity != self.flywheel_target_velocity || self.shot_cooldown > 0.0 {
             ctx.request_repaint();
         }
@@ -473,8 +564,10 @@ impl VisualizerApp {
             self.robot_x = (self.robot_x + field_dx * dt)
                 .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
             self.robot_y = (self.robot_y + field_dy * dt)
-                .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
+                .clamp(9.0, FIELD_SIZE_IN - 9.0);
+            self.resolve_robot_wall_collisions();
             self.heading_deg = (self.heading_deg + self.turn_velocity * dt).rem_euclid(360.0);
+            self.resolve_robot_wall_collisions();
             self.elapsed_seconds += dt;
             ctx.request_repaint();
         } else if self.is_running {
@@ -482,7 +575,8 @@ impl VisualizerApp {
             self.robot_x = (self.robot_x + h.sin() * self.drive_speed * dt)
                 .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
             self.robot_y = (self.robot_y + h.cos() * self.drive_speed * dt)
-                .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
+                .clamp(9.0, FIELD_SIZE_IN - 9.0);
+            self.resolve_robot_wall_collisions();
             self.elapsed_seconds += dt;
             ctx.request_repaint();
         }
@@ -632,14 +726,14 @@ fn starting_field_pollen() -> Vec<Pollen> {
     ];
     for (x, y) in flower_positions {
         for radius in flower_radii {
-            pollen.push(Pollen { x, y, radius, from_flower: true });
+            pollen.push(Pollen { x, y, radius, from_flower: true, vx: 0.0, vy: 0.0 });
         }
     }
 
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
-        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false });
-        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false });
+        pollen.push(Pollen { x: offset, y: POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, vx: 0.0, vy: 0.0 });
+        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN - POLLEN_RADIUS_IN, radius: POLLEN_RADIUS_IN, from_flower: false, vx: 0.0, vy: 0.0 });
     }
 
     pollen
