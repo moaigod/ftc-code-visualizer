@@ -98,6 +98,22 @@ impl VisualizerApp {
         }
     }
 
+
+    fn telemetry_value(&self, expression: &str) -> String {
+        let key = expression.replace(' ', "").to_lowercase();
+        match key.as_str() {
+            "heading" | "headingdeg" | "robotheading" | "heading_degrees" => format!("{:.1}°", self.heading_deg),
+            "headingrad" | "headingradians" => format!("{:.3} rad", self.heading_deg.to_radians()),
+            "x" | "robotx" | "posx" | "getx()" => format!("{:.1} in", self.robot_x),
+            "y" | "roboty" | "posy" | "gety()" => format!("{:.1} in", self.robot_y),
+            "runtime" | "elapsedtime" | "elapsed_seconds" => format!("{:.2} s", self.elapsed_seconds),
+            "gamepad1.left_stick_x" | "gamepad1.leftstickx" => format!("{:.2}", self.stick_strafe),
+            "gamepad1.left_stick_y" | "gamepad1.leftsticky" => format!("{:.2}", -self.stick_forward),
+            "gamepad1.right_stick_x" | "gamepad1.rightstickx" => format!("{:.2}", self.stick_turn),
+            _ => format!("{} (expression not evaluated)", expression),
+        }
+    }
+
     fn update_simulation(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32().min(0.05);
@@ -119,9 +135,9 @@ impl VisualizerApp {
             ctx.request_repaint();
         } else if self.is_running {
             let h = self.heading_deg.to_radians();
-            self.robot_x = (self.robot_x + h.cos() * self.drive_speed * dt)
+            self.robot_x = (self.robot_x + h.sin() * self.drive_speed * dt)
                 .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
-            self.robot_y = (self.robot_y + h.sin() * self.drive_speed * dt)
+            self.robot_y = (self.robot_y + h.cos() * self.drive_speed * dt)
                 .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
             self.elapsed_seconds += dt;
             ctx.request_repaint();
@@ -150,7 +166,8 @@ impl VisualizerApp {
         painter.rect_filled(robot, 2.0, Color32::from_rgb(230, 55, 165));
         painter.rect_stroke(robot, 2.0, Stroke::new(1.5, Color32::WHITE), egui::StrokeKind::Inside);
         let h = self.heading_deg.to_radians();
-        let nose = Pos2::new(center.x + h.cos() * half, center.y - h.sin() * half);
+        // Heading: 0 degrees points up-field; positive angles rotate clockwise.
+        let nose = Pos2::new(center.x + h.sin() * half, center.y - h.cos() * half);
         painter.line_segment([center, nose], Stroke::new(3.0, Color32::YELLOW));
         painter.circle_filled(nose, 3.5, Color32::YELLOW);
         painter.text(rect.left_top() + Vec2::new(7.0, 7.0), Align2::LEFT_TOP,
@@ -200,6 +217,31 @@ impl eframe::App for VisualizerApp {
             }
             ui.label(format!("Input: F {:.2} · S {:.2} · R {:.2}",
                 self.stick_forward, self.stick_strafe, self.stick_turn));
+            ui.add_space(8.0);
+            ui.heading("OpMode telemetry");
+            if let Some(index) = self.selected_op_mode {
+                if let Some(mode) = self.op_modes.get(index) {
+                    if mode.telemetry.is_empty() {
+                        ui.label("No telemetry.addData() or telemetry.addLine() calls detected in this OpMode.");
+                    } else {
+                        egui::ScrollArea::vertical().max_height(190.0).show(ui, |ui| {
+                            for item in &mode.telemetry {
+                                if item.expression.is_empty() {
+                                    ui.label(&item.caption);
+                                } else {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.strong(format!("{}:", item.caption));
+                                        ui.label(self.telemetry_value(&item.expression));
+                                    });
+                                }
+                            }
+                        });
+                    }
+                }
+            } else {
+                ui.label("Select an OpMode to inspect its telemetry calls.");
+            }
+
             ui.add_space(12.0); ui.separator(); ui.heading("Android Studio project");
             if ui.button("Import FTC project folder").clicked() { self.import_project(); }
             ui.label(&self.import_status);
