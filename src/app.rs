@@ -12,7 +12,9 @@ const POLLEN_RADIUS_IN: f32 = 1.4;
 const SHOT_FLIGHT_SECONDS: f32 = 0.72;
 const FLOWER_INTAKE_COOLDOWN_SECONDS: f32 = 0.5;
 const HIVE_STARTING_NECTAR: u8 = 3;
-const HIVE_ADDITIONAL_POLLEN_TO_TIP: u8 = 4;
+const HIVE_TIP_LOAD_UNITS: f32 = 8.0;
+const HIVE_NECTAR_LOAD_UNITS: f32 = 1.6;
+const HIVE_POLLEN_LOAD_UNITS: f32 = 1.0;
 const HIVE_RED_CENTER: (f32, f32) = (62.6, 72.0);
 const HIVE_BLUE_CENTER: (f32, f32) = (81.4, 72.0);
 const HIVE_CELL_HALF_WIDTH_IN: f32 = 10.0;
@@ -479,8 +481,9 @@ impl VisualizerApp {
             projectile.x += projectile.vx * dt;
             projectile.y += projectile.vy * dt;
 
-            // The upward-facing cell starts with 3 NECTAR. Four launched
-            // POLLEN in that cell reaches the user-provided 3 + 4 tip threshold.
+            // Calibrated tipping load: 8 pollen-equivalent units. Each Nectar is
+            // weighted as 1.6 Pollen, so 3 starting Nectar + 4 Pollen tips;
+            // 5 Nectar alone or 8 Pollen alone also reaches the threshold.
             let in_red_cell = (projectile.x - HIVE_RED_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
                 && (projectile.y - HIVE_RED_CENTER.1).abs() <= HIVE_CELL_HALF_DEPTH_IN;
             let in_blue_cell = (projectile.x - HIVE_BLUE_CENTER.0).abs() <= HIVE_CELL_HALF_WIDTH_IN
@@ -488,22 +491,24 @@ impl VisualizerApp {
             if in_red_cell && !self.red_hive_tipped {
                 self.red_hive_pollen = self.red_hive_pollen.saturating_add(1);
                 self.pollen_projectile = None;
-                if self.red_hive_pollen >= HIVE_ADDITIONAL_POLLEN_TO_TIP {
+                if (HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
+                    + self.red_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS) >= HIVE_TIP_LOAD_UNITS {
                     self.red_hive_tipped = true;
                     self.pollen_status = format!("Red hive tipped! {} starting NECTAR + {} POLLEN.", HIVE_STARTING_NECTAR, self.red_hive_pollen);
                 } else {
-                    self.pollen_status = format!("Red hive: {}/{} POLLEN toward tip ({} starting NECTAR).", self.red_hive_pollen, HIVE_ADDITIONAL_POLLEN_TO_TIP, HIVE_STARTING_NECTAR);
+                    self.pollen_status = format!("Red hive: {:.1}/{:.1} load units ({} starting NECTAR, {} POLLEN).", HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS + self.red_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS, HIVE_TIP_LOAD_UNITS, HIVE_STARTING_NECTAR, self.red_hive_pollen);
                 }
                 return;
             }
             if in_blue_cell && !self.blue_hive_tipped {
                 self.blue_hive_pollen = self.blue_hive_pollen.saturating_add(1);
                 self.pollen_projectile = None;
-                if self.blue_hive_pollen >= HIVE_ADDITIONAL_POLLEN_TO_TIP {
+                if (HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
+                    + self.blue_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS) >= HIVE_TIP_LOAD_UNITS {
                     self.blue_hive_tipped = true;
                     self.pollen_status = format!("Blue hive tipped! {} starting NECTAR + {} POLLEN.", HIVE_STARTING_NECTAR, self.blue_hive_pollen);
                 } else {
-                    self.pollen_status = format!("Blue hive: {}/{} POLLEN toward tip ({} starting NECTAR).", self.blue_hive_pollen, HIVE_ADDITIONAL_POLLEN_TO_TIP, HIVE_STARTING_NECTAR);
+                    self.pollen_status = format!("Blue hive: {:.1}/{:.1} load units ({} starting NECTAR, {} POLLEN).", HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS + self.blue_hive_pollen as f32 * HIVE_POLLEN_LOAD_UNITS, HIVE_TIP_LOAD_UNITS, HIVE_STARTING_NECTAR, self.blue_hive_pollen);
                 }
                 return;
             }
