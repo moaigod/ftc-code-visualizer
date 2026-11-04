@@ -332,6 +332,13 @@ impl VisualizerApp {
         let robot_vx = self.strafe_velocity * heading.cos() + self.forward_velocity * heading.sin();
         let robot_vy = -self.strafe_velocity * heading.sin() + self.forward_velocity * heading.cos();
         for pollen in &mut self.field_pollen {
+            // Pollen that belongs to a flower stays anchored in its stack.
+            if pollen.from_flower {
+                pollen.vx = 0.0;
+                pollen.vy = 0.0;
+                continue;
+            }
+
             pollen.x += pollen.vx * dt;
             pollen.y += pollen.vy * dt;
             let friction = (1.0 - 2.8 * dt).max(0.0);
@@ -374,6 +381,11 @@ impl VisualizerApp {
                 let (left, right) = self.field_pollen.split_at_mut(j);
                 let a = &mut left[i];
                 let b = &mut right[0];
+                // Flower-stack pollen is fixed and cannot be displaced by
+                // loose pollen either.
+                if a.from_flower || b.from_flower {
+                    continue;
+                }
                 let dx = b.x - a.x;
                 let dy = b.y - a.y;
                 let distance = dx.hypot(dy);
@@ -390,6 +402,27 @@ impl VisualizerApp {
                         b.vx += nx * relative * 0.55; b.vy += ny * relative * 0.55;
                     }
                 }
+            }
+        }
+
+        // Keep every loose pollen piece fully inside the field. Bounce it
+        // gently off the boundary instead of allowing it to leave the play area.
+        for pollen in &mut self.field_pollen {
+            let min = pollen.radius;
+            let max = FIELD_SIZE_IN - pollen.radius;
+            if pollen.x < min {
+                pollen.x = min;
+                pollen.vx = pollen.vx.abs() * 0.35;
+            } else if pollen.x > max {
+                pollen.x = max;
+                pollen.vx = -pollen.vx.abs() * 0.35;
+            }
+            if pollen.y < min {
+                pollen.y = min;
+                pollen.vy = pollen.vy.abs() * 0.35;
+            } else if pollen.y > max {
+                pollen.y = max;
+                pollen.vy = -pollen.vy.abs() * 0.35;
             }
         }
     }
