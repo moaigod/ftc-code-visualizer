@@ -46,7 +46,6 @@ pub struct VisualizerApp {
     pollen_status: String,
     drive_wheel_power: [f32; 4],
     drive_wheel_velocity: [f32; 4],
-    shooter_motor_power: f32,
     motor_names: [String; 5],
     flower_intake_cooldown: f32,
 }
@@ -72,7 +71,6 @@ impl Default for VisualizerApp {
             pollen_status: "4 preloaded pollen onboard.".to_owned(),
             drive_wheel_power: [0.0; 4],
             drive_wheel_velocity: [0.0; 4],
-            shooter_motor_power: 0.0,
             motor_names: [
                 "frontLeft".to_owned(),
                 "frontRight".to_owned(),
@@ -203,12 +201,27 @@ impl VisualizerApp {
             return;
         }
 
-        let heading = self.heading_deg.to_radians();
-        let speed = self.detected_shooter_power().unwrap_or(0.0) * 42.0;
-        if speed <= 0.1 {
-            self.pollen_status = "Shooter motor power is zero.".to_owned();
+        let Some((command, value)) = self.detected_shooter_command() else {
+            self.pollen_status = "No shooter command found. Set the Shooter motor name and select an OpMode.".to_owned();
+            return;
+        };
+        let Some(command_value) = value.trim().parse::<f32>().ok() else {
+            self.pollen_status = format!("Shooter uses {command}({value}); resolve this expression before simulating its shot.");
+            return;
+        };
+        if command == "setPower" {
+            self.pollen_status = format!("Shooter power is {command_value:.3}. Projectile speed needs shooter calibration; no guessed speed was applied.");
             return;
         }
+        if command_value <= 0.0 {
+            self.pollen_status = "Detected shooter velocity is zero or negative.".to_owned();
+            return;
+        }
+        self.pollen_status = format!("Detected setVelocity({command_value:.1}) from code, but converting encoder velocity to field inches/second requires motor, gearing, and wheel calibration.");
+        return;
+        #[allow(unreachable_code)]
+        let heading = self.heading_deg.to_radians();
+        let speed = 0.0_f32;
         let start_x = self.robot_x + heading.sin() * (ROBOT_SIZE_IN * 0.5 + 1.0);
         let start_y = self.robot_y + heading.cos() * (ROBOT_SIZE_IN * 0.5 + 1.0);
         self.pollen_projectile = Some(PollenProjectile {
