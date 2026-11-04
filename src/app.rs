@@ -357,6 +357,12 @@ impl VisualizerApp {
                 pollen.vx = pollen.vx * 0.25 + nx * push_speed * 0.85;
                 pollen.vy = pollen.vy * 0.25 + ny * push_speed * 0.85;
             }
+
+            // Invisible hive perimeter walls affect scoring elements only.
+            // They keep the starting Nectar inside each untipped hive while
+            // still allowing the robot to drive across the same area.
+            constrain_element_to_hive(pollen, HIVE_RED_CENTER, self.red_hive_tipped);
+            constrain_element_to_hive(pollen, HIVE_BLUE_CENTER, self.blue_hive_tipped);
         }
 
         // Resolve overlaps between loose pollen pieces with a soft, damped bounce.
@@ -780,6 +786,36 @@ fn find_outtake_commands(source: &str) -> Vec<(String, String, String, String)> 
         matches!(&motor.role, crate::ftc_interpreter::MotorRole::Outtake)
             .then_some((motor.variable.clone(), motor.hardware_name.clone(), command.method, command.expression))
     }).collect()
+}
+
+fn constrain_element_to_hive(element: &mut Pollen, center: (f32, f32), tipped: bool) {
+    if tipped {
+        return;
+    }
+
+    // Treat the hive as a small rectangular enclosure. The radius inset keeps
+    // the entire scoring element inside rather than letting its center cross
+    // the invisible wall.
+    let min_x = center.0 - HIVE_CELL_HALF_WIDTH_IN + element.radius;
+    let max_x = center.0 + HIVE_CELL_HALF_WIDTH_IN - element.radius;
+    let min_y = center.1 - HIVE_CELL_HALF_DEPTH_IN + element.radius;
+    let max_y = center.1 + HIVE_CELL_HALF_DEPTH_IN - element.radius;
+
+    if element.x < min_x {
+        element.x = min_x;
+        element.vx = element.vx.abs() * 0.35;
+    } else if element.x > max_x {
+        element.x = max_x;
+        element.vx = -element.vx.abs() * 0.35;
+    }
+
+    if element.y < min_y {
+        element.y = min_y;
+        element.vy = element.vy.abs() * 0.35;
+    } else if element.y > max_y {
+        element.y = max_y;
+        element.vy = -element.vy.abs() * 0.35;
+    }
 }
 
 fn starting_field_pollen() -> Vec<Pollen> {
