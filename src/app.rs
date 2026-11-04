@@ -516,22 +516,16 @@ impl VisualizerApp {
                     }
                 };
 
-                // Keep scored pieces in the cell. They are rendered smaller than
-                // loose field pieces and arranged in fixed positions inside it.
-                let stored_index = pollen_count.saturating_add(nectar_count).saturating_sub(1) as usize;
-                let slot = [
-                    (-4.0_f32, -2.0_f32), (0.0, -2.0), (4.0, -2.0),
-                    (-4.0, 2.0), (0.0, 2.0), (4.0, 2.0),
-                    (-2.0, 4.5), (2.0, 4.5),
-                ][stored_index.min(7)];
-                let stored_radius = match projectile.kind {
-                    ElementKind::Pollen => 0.72,
-                    ElementKind::Nectar => 0.92,
+                // Keep scored elements at their actual landing position and
+                // original field size; scoring must not resize or reposition them.
+                let scored_radius = match projectile.kind {
+                    ElementKind::Pollen => POLLEN_RADIUS_IN,
+                    ElementKind::Nectar => NECTAR_RADIUS_IN,
                 };
                 self.field_pollen.push(Pollen {
-                    x: center.0 + slot.0,
-                    y: center.1 + slot.1,
-                    radius: stored_radius,
+                    x: projectile.x,
+                    y: projectile.y,
+                    radius: scored_radius,
                     from_flower: false,
                     kind: projectile.kind,
                     hive: Some(side),
@@ -539,7 +533,14 @@ impl VisualizerApp {
                     vy: 0.0,
                 });
 
-                let load=HIVE_STARTING_NECTAR as f32*HIVE_NECTAR_LOAD_UNITS+nectar_count as f32*HIVE_NECTAR_LOAD_UNITS+pollen_count as f32*HIVE_POLLEN_LOAD_UNITS;
+                // The three starting Nectar pieces exist only in each alliance's
+                // initially active cell, and are counted only for its first tip.
+                let starting_nectar_load = match side {
+                    HiveSide::Red if self.red_hive_tip_count == 0 => HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS,
+                    HiveSide::Blue if self.blue_hive_tip_count == 0 => HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS,
+                    _ => 0.0,
+                };
+                let load=starting_nectar_load+nectar_count as f32*HIVE_NECTAR_LOAD_UNITS+pollen_count as f32*HIVE_POLLEN_LOAD_UNITS;
                 self.pollen_projectile=None;
                 if load>=HIVE_TIP_LOAD_UNITS {
                     match side {
@@ -555,26 +556,6 @@ impl VisualizerApp {
                             self.blue_hive_pollen = 0;
                             self.blue_hive_extra_nectar = 0;
                         }
-                    }
-                    // The opposite fixed cell becomes active and receives its
-                    // three starting Nectar only when it becomes untipped.
-                    let next_center = match side {
-                        HiveSide::Red => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
-                        HiveSide::Blue => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
-                    };
-                    // Refill only the cell that has just changed from tipped
-                    // to untipped. These are new, full-size starting Nectar.
-                    for (dx, dy) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
-                        self.field_pollen.push(Pollen {
-                            x: next_center.0 + dx,
-                            y: next_center.1 + dy,
-                            radius: NECTAR_RADIUS_IN,
-                            from_flower: false,
-                            kind: ElementKind::Nectar,
-                            hive: Some(side),
-                            vx: 0.0,
-                            vy: 0.0,
-                        });
                     }
                     self.pollen_status=format!("{} hive tipped. Its opposite fixed cell is now untipped.",if side==HiveSide::Red{"Red"}else{"Blue"});
                 } else {
