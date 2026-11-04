@@ -226,11 +226,13 @@ impl VisualizerApp {
 
 fn numeric_variable(source: &str, variable: &str) -> Option<f32> {
     for line in source.lines() {
-        let (left, right) = line.split_once('=')?;
-        let declared_name = left
+        let Some((left, right)) = line.split_once('=') else { continue; };
+        let Some(declared_name) = left
             .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
             .filter(|part| !part.is_empty())
-            .last()?;
+            .last()
+        else { continue; };
+
         if declared_name == variable {
             let literal = right.trim().trim_end_matches(';').trim();
             if let Ok(value) = literal.parse::<f32>() {
