@@ -149,6 +149,8 @@ fn canonical_button(condition: &str) -> Option<String> {
         ("west", ["x", "square"]), ("north", ["y", "triangle"]),
         ("left_bumper", ["left_bumper", "leftbumper"]),
         ("right_bumper", ["right_bumper", "rightbumper"]),
+        ("left_trigger", ["left_trigger", "lefttrigger"]),
+        ("right_trigger", ["right_trigger", "righttrigger"]),
         ("dpad_up", ["dpad_up", "dpadup"]), ("dpad_down", ["dpad_down", "dpaddown"]),
         ("dpad_left", ["dpad_left", "dpadleft"]), ("dpad_right", ["dpad_right", "dpadright"]),
         ("start", ["start", "options"]), ("back", ["back", "share"]),
