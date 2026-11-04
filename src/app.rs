@@ -570,17 +570,14 @@ impl VisualizerApp {
                             self.blue_hive_extra_nectar = 0;
                         }
                     }
-
-                    // Once the hive tips, its previously scored contents spill
-                    // into the now-accessible tipped cell and become loose pieces.
-                    // Keep their alliance ownership and positions so the robot
-                    // can collect them again.
+                    // The old active cell becomes the tipped cell. Release its
+                    // previously scored pieces so they can collide with and be
+                    // collected by the robot again.
                     for element in &mut self.field_pollen {
                         if element.scored && element.hive == Some(side) {
                             element.scored = false;
                         }
                     }
-
                     self.pollen_status=format!("{} hive tipped. Its opposite fixed cell is now untipped.",if side==HiveSide::Red{"Red"}else{"Blue"});
                 } else {
                     self.pollen_status=format!("{} hive: {:.1}/8.0 load units toward tipping.",if side==HiveSide::Red{"Red"}else{"Blue"},load);
@@ -1209,3 +1206,159 @@ impl eframe::App for VisualizerApp {
                         self.drive_wheel_power[i], self.drive_wheel_velocity[i]));
                 }
             });
+            ui.add_space(8.0);
+            ui.separator();
+            ui.heading("Pollen");
+            ui.strong(format!("Carrying: {}/4", self.carried_elements.len()));
+            let pc=self.carried_elements.iter().filter(|item|item.kind==ElementKind::Pollen).count();
+            let nc=self.carried_elements.iter().filter(|item|item.kind==ElementKind::Nectar).count();
+            ui.label(format!("Pollen: {pc} · Nectar: {nc}"));
+            ui.label(format!("Shoot order: {}",self.carried_elements.iter().map(|item|match item.kind{ElementKind::Pollen=>"P",ElementKind::Nectar=>"N"}).collect::<Vec<_>>().join(" → ")));
+            ui.label(format!("Flywheel: {:.0}/{:.0} ticks/s", self.flywheel_velocity, self.flywheel_target_velocity));
+            ui.add(egui::Slider::new(&mut self.shooter_velocity_scale, 0.005..=0.06).text("Shooter calibration (in/s per tick/s)"));
+            ui.label(format!("Intake: {} · Feeder: {}", if self.intake_running { "active" } else { "off" }, if self.feeder_running { "active" } else { "off" }));
+            ui.label(&self.pollen_status);
+            if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
+                let outtakes = find_outtake_commands(&mode.source);
+                if outtakes.is_empty() {
+                    ui.label("No outtake motor commands detected. Expected names such as OuttakeL / OuttakeR.");
+                } else {
+                    ui.label("Automatically detected outtake motors:");
+                    for (variable, hardware, kind, value) in outtakes {
+                        ui.label(format!("{variable} (hardware \"{hardware}\"): {kind}({value})"));
+                    }
+                }
+            } else {
+                ui.label("Select an OpMode to detect outtake motors automatically.");
+            }
+            ui.label("Outtake commands are read from the selected OpMode. Projectile speed still requires wheel/gearing calibration.");
+            ui.horizontal(|ui| {
+                if ui.button("Intake pollen [E]").clicked() {
+                    self.intake_pollen();
+                }
+                if ui.button("Shoot pollen [Space]").clicked() {
+                    self.shoot_pollen();
+                }
+            });
+            ui.label("Move the front intake close to a yellow pollen ball, then intake.");
+            ui.collapsing("Detected gamepad button actions", |ui| {
+                let actions = self.detected_gamepad_actions();
+                if actions.is_empty() {
+                    ui.label("No gamepad1 button if-blocks detected in the selected OpMode.");
+                } else {
+                    for (button, action) in actions {
+                        let label = match button.as_str() {
+                            "south" => "Bottom face button (A / Cross)",
+                            "east" => "Right face button (B / Circle)",
+                            "west" => "Left face button (X / Square)",
+                            "north" => "Top face button (Y / Triangle)",
+                            other => other,
+                        };
+                        ui.label(format!("{label} → {action}"));
+                    }
+                    ui.label("Button actions are checked while TeleOp is running.");
+                }
+            });
+            ui.collapsing("FTC interpreter: detected hardware and commands", |ui| {
+                if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
+                    let program = crate::ftc_interpreter::interpret(&mode.source);
+                    if program.motors.is_empty() {
+                        ui.label("No supported hardwareMap motor declarations found.");
+                    }
+                    for motor in &program.motors {
+                        let role = match &motor.role {
+                            crate::ftc_interpreter::MotorRole::Drive(index) => ["Front left", "Front right", "Back left", "Back right"][*index],
+                            crate::ftc_interpreter::MotorRole::Intake => "Intake",
+                            crate::ftc_interpreter::MotorRole::Feeder => "Feeder",
+                            crate::ftc_interpreter::MotorRole::Outtake => "Outtake",
+                            crate::ftc_interpreter::MotorRole::Other => "Other motor",
+                        };
+                        ui.label(format!("{} -> {} ({})", motor.variable, motor.hardware_name, role));
+                    }
+                    ui.separator();
+                    for command in &program.commands {
+                        let button = command.button.as_deref().unwrap_or("always / no button block");
+                        ui.label(format!("{}: {}({}) [{}]", command.motor, command.method, command.expression, button));
+                    }
+                    for diagnostic in &program.diagnostics { ui.label(diagnostic); }
+                } else {
+                    ui.label("Import and select an OpMode to interpret its FTC hardware and commands.");
+                }
+            });
+            ui.add_space(8.0);
+            ui.heading("OpMode telemetry");
+            if let Some(index) = self.selected_op_mode {
+                if let Some(mode) = self.op_modes.get(index) {
+                    if mode.telemetry.is_empty() {
+                        ui.label("No telemetry.addData() or telemetry.addLine() calls detected in this OpMode.");
+                    } else {
+                        egui::ScrollArea::vertical().id_salt("telemetry_scroll").max_height(260.0).auto_shrink([false, false]).show(ui, |ui| {
+                            for item in &mode.telemetry {
+                                if item.expression.is_empty() {
+                                    ui.label(&item.caption);
+                                } else {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.strong(format!("{}:", item.caption));
+                                        ui.label(self.telemetry_value(&item.expression));
+                                    });
+                                }
+                            }
+                        });
+                    }
+                }
+            } else {
+                ui.label("Select an OpMode to inspect its telemetry calls.");
+            }
+
+
+            if let Some(index) = self.selected_op_mode {
+                if let Some(mode) = self.op_modes.get(index) {
+                    if mode.kind == "Autonomous" {
+                        ui.colored_label(Color32::YELLOW, "Autonomous execution is not implemented yet. This OpMode is currently source-preview only.");
+                    }
+                }
+            }
+
+            ui.add_space(12.0); ui.separator(); ui.heading("Android Studio project");
+            if ui.button("Import FTC project folder").clicked() { self.import_project(); }
+            ui.label(&self.import_status);
+            if let Some(name) = &self.project_name {
+                ui.label(format!("Project: {name}")); ui.label("Detected OpModes:");
+                let mut clicked = None;
+                egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+                    for (i, mode) in self.op_modes.iter().enumerate() {
+                        if ui.selectable_label(self.selected_op_mode == Some(i),
+                            format!("{} · {}", mode.kind, mode.name)).clicked() { clicked = Some(i); }
+                    }
+                });
+                if let Some(i) = clicked { self.selected_op_mode = Some(i); self.show_source = true; }
+                if self.op_modes.is_empty() { ui.label("No @TeleOp or @Autonomous classes were detected."); }
+            }
+            ui.add_space(12.0); ui.separator(); ui.heading("Field status");
+            ui.label("144 × 144 inches"); ui.label("Background: supplied field screenshot");
+                });
+        });
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| self.draw_field(ui));
+        });
+        if self.show_source {
+            if let Some(index) = self.selected_op_mode {
+                if let Some(mode) = self.op_modes.get(index) {
+                    let title = format!("{} — {}", mode.kind, mode.name);
+                    let mut source = mode.source.clone();
+                    let path = mode.path.display().to_string();
+                    let language = mode.language.clone();
+                    egui::Window::new(title).open(&mut self.show_source)
+                        .default_size([720.0, 620.0]).show(ctx, |ui| {
+                            ui.label(format!("{language} · {path}")); ui.separator();
+                            egui::ScrollArea::both().show(ui, |ui| {
+                                ui.add(egui::TextEdit::multiline(&mut source)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY).code_editor().interactive(false));
+                            });
+                        });
+                }
+            }
+        }
+    }
+}
