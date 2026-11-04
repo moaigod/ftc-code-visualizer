@@ -12,11 +12,14 @@ const POLLEN_RADIUS_IN: f32 = 1.4;
 const INTAKE_RANGE_IN: f32 = 10.0;
 const SHOT_SPEED_IN_S: f32 = 42.0;
 const SHOT_FLIGHT_SECONDS: f32 = 0.72;
+const FLOWER_INTAKE_COOLDOWN_SECONDS: f32 = 0.5;
 
 #[derive(Clone, Copy, Debug)]
 struct Pollen {
     x: f32,
     y: f32,
+    radius: f32,
+    from_flower: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -45,6 +48,7 @@ pub struct VisualizerApp {
     drive_wheel_power: [f32; 4],
     drive_wheel_velocity: [f32; 4],
     shooter_motor_power: f32,
+    flower_intake_cooldown: f32,
 }
 
 impl Default for VisualizerApp {
@@ -69,6 +73,7 @@ impl Default for VisualizerApp {
             drive_wheel_power: [0.0; 4],
             drive_wheel_velocity: [0.0; 4],
             shooter_motor_power: 0.8,
+            flower_intake_cooldown: 0.0,
         }
     }
 }
@@ -151,8 +156,16 @@ impl VisualizerApp {
             .min_by(|a, b| a.1.total_cmp(&b.1));
 
         if let Some((index, _)) = nearest {
+            let pollen = self.field_pollen[index];
+            if pollen.from_flower && self.flower_intake_cooldown > 0.0 {
+                self.pollen_status = format!("Flower intake cooling down: {:.1}s.", self.flower_intake_cooldown);
+                return;
+            }
             self.field_pollen.remove(index);
             self.pollen_count += 1;
+            if pollen.from_flower {
+                self.flower_intake_cooldown = FLOWER_INTAKE_COOLDOWN_SECONDS;
+            }
             self.pollen_status = format!("Pollen collected: {}/4 onboard.", self.pollen_count);
         } else {
             self.pollen_status = "No pollen close enough to the intake.".to_owned();
@@ -203,6 +216,8 @@ impl VisualizerApp {
                 let landed = Pollen {
                     x: projectile.x.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
                     y: projectile.y.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
+                    radius: POLLEN_RADIUS_IN,
+                    from_flower: false,
                 };
                 self.field_pollen.push(landed);
                 self.pollen_projectile = None;
@@ -281,6 +296,7 @@ impl VisualizerApp {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
+        self.flower_intake_cooldown = (self.flower_intake_cooldown - dt).max(0.0);
         self.update_pollen(dt);
         if self.pollen_projectile.is_some() {
             ctx.request_repaint();
@@ -353,8 +369,9 @@ impl VisualizerApp {
                 field.left() + pollen.x * scale,
                 field.bottom() - pollen.y * scale,
             );
-            painter.circle_filled(position, POLLEN_RADIUS_IN * scale, Color32::from_rgb(255, 218, 35));
-            painter.circle_stroke(position, POLLEN_RADIUS_IN * scale, Stroke::new(1.0, Color32::from_rgb(120, 92, 0)));
+            let radius = pollen.radius * scale;
+            painter.circle_filled(position, radius, Color32::from_rgb(255, 218, 35));
+            painter.circle_stroke(position, radius, Stroke::new(1.0, Color32::from_rgb(120, 92, 0)));
         }
 
         if let Some(projectile) = self.pollen_projectile {
@@ -389,18 +406,25 @@ impl VisualizerApp {
 fn starting_field_pollen() -> Vec<Pollen> {
     let mut pollen = Vec::with_capacity(24);
 
-    // Four Flowers attached to the four field walls; four pollen at each retrieval side.
-    for offset in [-5.0_f32, -1.7, 1.7, 5.0] {
-        pollen.push(Pollen { x: 72.0 + offset, y: 10.0 });
-        pollen.push(Pollen { x: 134.0, y: 72.0 + offset });
-        pollen.push(Pollen { x: 72.0 + offset, y: 134.0 });
-        pollen.push(Pollen { x: 10.0, y: 72.0 + offset });
+    // Each Flower has four overlapping pollen pieces. The progressively smaller
+    // circles make the stack look like pollen being drawn into the intake.
+    let flower_radii = [1.4_f32, 1.05, 0.75, 0.45];
+    let flower_positions = [
+        (94.5, 0.0),                  // Bottom
+        (FIELD_SIZE_IN, 94.5),        // Right
+        (FIELD_SIZE_IN - 94.5, FIELD_SIZE_IN), // Top: mirrored across 144
+        (0.0, FIELD_SIZE_IN - 94.5),  // Left: mirrored across 144
+    ];
+    for (x, y) in flower_positions {
+        for radius in flower_radii {
+            pollen.push(Pollen { x, y, radius, from_flower: true });
+        }
     }
 
     // Four pollen in each alliance Garden, staged in opposite corners.
     for offset in [0.0_f32, 4.5, 9.0, 13.5] {
-        pollen.push(Pollen { x: offset, y: 0.0 });
-        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN });
+        pollen.push(Pollen { x: offset, y: 0.0, radius: POLLEN_RADIUS_IN, from_flower: false });
+        pollen.push(Pollen { x: FIELD_SIZE_IN - offset, y: FIELD_SIZE_IN, radius: POLLEN_RADIUS_IN, from_flower: false });
     }
 
     pollen
