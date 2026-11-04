@@ -2,6 +2,8 @@ use std::time::Instant;
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, TextureHandle, Vec2};
 
+use crate::importer::{self, OpModeInfo};
+
 const FIELD_SIZE_IN: f32 = 144.0;
 const ROBOT_SIZE_IN: f32 = 18.0;
 
@@ -15,6 +17,11 @@ pub struct VisualizerApp {
     elapsed_seconds: f32,
     field_texture: Option<TextureHandle>,
     field_load_attempted: bool,
+    project_name: Option<String>,
+    op_modes: Vec<OpModeInfo>,
+    selected_op_mode: Option<usize>,
+    show_source: bool,
+    import_status: String,
 }
 
 impl Default for VisualizerApp {
@@ -29,6 +36,11 @@ impl Default for VisualizerApp {
             elapsed_seconds: 0.0,
             field_texture: None,
             field_load_attempted: false,
+            project_name: None,
+            op_modes: Vec::new(),
+            selected_op_mode: None,
+            show_source: false,
+            import_status: "No FTC project loaded.".to_owned(),
         }
     }
 }
@@ -41,6 +53,30 @@ impl VisualizerApp {
         self.elapsed_seconds = 0.0;
         self.is_running = false;
         self.last_frame = Instant::now();
+    }
+
+    fn import_project(&mut self) {
+        if let Some(project_path) = rfd::FileDialog::new().pick_folder() {
+            match importer::scan_project(&project_path) {
+                Ok(scan) => {
+                    self.project_name = Some(scan.project_name);
+                    self.op_modes = scan.op_modes;
+                    self.selected_op_mode = None;
+                    self.import_status = format!(
+                        "Scanned {} source files in {}. Found {} OpMode(s).",
+                        scan.source_files,
+                        scan.source_root.display(),
+                        self.op_modes.len()
+                    );
+                }
+                Err(error) => {
+                    self.import_status = error;
+                    self.project_name = None;
+                    self.op_modes.clear();
+                    self.selected_op_mode = None;
+                }
+            }
+        }
     }
 
     fn load_field_image(&mut self, ctx: &egui::Context) {
@@ -184,7 +220,7 @@ impl eframe::App for VisualizerApp {
 
         egui::SidePanel::left("controls")
             .resizable(true)
-            .default_width(270.0)
+            .default_width(300.0)
             .show(ctx, |ui| {
                 ui.heading("Robot");
                 ui.add_space(8.0);
@@ -192,7 +228,6 @@ impl eframe::App for VisualizerApp {
                 ui.label("Position (inches)");
                 ui.add(egui::Slider::new(&mut self.robot_x, 0.0..=FIELD_SIZE_IN).text("X"));
                 ui.add(egui::Slider::new(&mut self.robot_y, 0.0..=FIELD_SIZE_IN).text("Y"));
-                ui.add_space(4.0);
                 ui.add(
                     egui::Slider::new(&mut self.heading_deg, 0.0..=360.0)
                         .text("Heading")
@@ -216,10 +251,32 @@ impl eframe::App for VisualizerApp {
 
                 ui.add_space(12.0);
                 ui.separator();
-                ui.heading("Project");
-                ui.label("No FTC project loaded.");
-                ui.add_space(4.0);
-                ui.label("Project import and OpMode parsing are not implemented yet.");
+                ui.heading("Android Studio project");
+                if ui.button("Import FTC project folder").clicked() {
+                    self.import_project();
+                }
+                ui.label(&self.import_status);
+
+                if let Some(project_name) = &self.project_name {
+                    ui.label(format!("Project: {project_name}"));
+                    ui.label("Detected OpModes:");
+                    let mut clicked_op_mode = None;
+                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                        for (index, op_mode) in self.op_modes.iter().enumerate() {
+                            let label = format!("{} · {}", op_mode.kind, op_mode.name);
+                            if ui.selectable_label(self.selected_op_mode == Some(index), label).clicked() {
+                                clicked_op_mode = Some(index);
+                            }
+                        }
+                    });
+                    if let Some(index) = clicked_op_mode {
+                        self.selected_op_mode = Some(index);
+                        self.show_source = true;
+                    }
+                    if self.op_modes.is_empty() {
+                        ui.label("No @TeleOp or @Autonomous classes were detected.");
+                    }
+                }
 
                 ui.add_space(12.0);
                 ui.separator();
@@ -233,5 +290,31 @@ impl eframe::App for VisualizerApp {
                 self.draw_field(ui);
             });
         });
+
+        if self.show_source {
+            if let Some(index) = self.selected_op_mode {
+                if let Some(op_mode) = self.op_modes.get(index) {
+                    let title = format!("{} — {}", op_mode.kind, op_mode.name);
+                    let source = op_mode.source.clone();
+                    let path = op_mode.path.display().to_string();
+                    let language = op_mode.language.clone();
+                    egui::Window::new(title)
+                        .open(&mut self.show_source)
+                        .default_size([720.0, 620.0])
+                        .show(ctx, |ui| {
+                            ui.label(format!("{language} · {path}"));
+                            ui.separator();
+                            egui::ScrollArea::both().show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut source.as_str())
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(f32::INFINITY)
+                                        .code_editor(),
+                                );
+                            });
+                        });
+                }
+            }
+        }
     }
 }
