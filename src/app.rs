@@ -475,10 +475,9 @@ impl VisualizerApp {
         }
         let scale = field.width() / FIELD_SIZE_IN;
 
-        // Draw larger pollen first so the smaller Flower pieces are visibly layered
-        // on top of the larger pieces in each stack.
+        // Draw smaller pollen first so larger pieces are layered over them.
         let mut pollen_draw_order = self.field_pollen.iter().collect::<Vec<_>>();
-        pollen_draw_order.sort_by(|a, b| b.radius.total_cmp(&a.radius));
+        pollen_draw_order.sort_by(|a, b| a.radius.total_cmp(&b.radius));
         for pollen in pollen_draw_order {
             let position = Pos2::new(
                 field.left() + pollen.x * scale,
