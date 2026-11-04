@@ -47,6 +47,7 @@ pub struct VisualizerApp {
     drive_wheel_power: [f32; 4],
     drive_wheel_velocity: [f32; 4],
     motor_names: [String; 5],
+    previous_gamepad_buttons: Vec<String>,
     flower_intake_cooldown: f32,
 }
 
@@ -78,6 +79,7 @@ impl Default for VisualizerApp {
                 "backRight".to_owned(),
                 String::new(),
             ],
+            previous_gamepad_buttons: Vec::new(),
             flower_intake_cooldown: 0.0,
         }
     }
@@ -611,8 +613,13 @@ impl eframe::App for VisualizerApp {
         if keyboard_shoot { self.shoot_pollen(); }
 
         let pressed_buttons = if self.teleop_active { self.poll_controller() } else { Vec::new() };
+        let newly_pressed = pressed_buttons.iter()
+            .filter(|button| !self.previous_gamepad_buttons.contains(button))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.previous_gamepad_buttons = pressed_buttons;
         let actions = self.detected_gamepad_actions();
-        for button in pressed_buttons {
+        for button in newly_pressed {
             if let Some((_, action)) = actions.iter().find(|(mapped, _)| mapped == &button) {
                 self.run_gamepad_action(action);
             }
