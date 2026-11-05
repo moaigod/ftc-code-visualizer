@@ -678,11 +678,15 @@ impl VisualizerApp {
         // Flywheel velocity is an encoder-feedback velocity controller driving
         // a rotor with inertia. The integral term helps it recover after shots.
         let error = self.flywheel_target_velocity - self.flywheel_velocity;
+        // A velocity-controlled flywheel should build speed quickly, then
+        // taper its acceleration as it approaches the requested RPM. Keep
+        // enough controller authority to overcome bearing/load drag above
+        // 1100 ticks/s so waitUntil(getVelocity() > 1100) remains reachable.
         self.flywheel_velocity_integral =
-            (self.flywheel_velocity_integral + error * dt).clamp(-6000.0, 6000.0);
+            (self.flywheel_velocity_integral + error * dt).clamp(-12000.0, 12000.0);
         let motor_acceleration =
-            (error * 2.0 + self.flywheel_velocity_integral * 0.12).clamp(-3600.0, 3600.0);
-        let bearing_drag = self.flywheel_velocity * 0.72;
+            (error * 4.0 + self.flywheel_velocity_integral * 0.35).clamp(-9000.0, 9000.0);
+        let bearing_drag = self.flywheel_velocity * 0.45;
         self.flywheel_velocity =
             (self.flywheel_velocity + (motor_acceleration - bearing_drag) * dt).max(0.0);
         if self.flywheel_target_velocity <= 0.0 && self.flywheel_velocity < 1.0 {
