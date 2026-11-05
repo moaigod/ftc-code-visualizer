@@ -1492,8 +1492,14 @@ impl eframe::App for VisualizerApp {
 
         let pressed_buttons = if self.teleop_active { self.poll_controller() } else { Vec::new() };
         let actions = self.detected_gamepad_actions();
-        self.intake_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("intake")));
-        self.feeder_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("feeder")));
+        // Controller state owns these mechanisms only during TeleOp.
+        // In autonomous, run_autonomous() and the command interpreter set
+        // these values; overwriting them with an empty controller state here
+        // would immediately cancel every autonomous setPower() action.
+        if self.teleop_active {
+            self.intake_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("intake")));
+            self.feeder_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("feeder")));
+        }
         let newly_pressed = pressed_buttons.iter()
             .filter(|button| !self.previous_gamepad_buttons.contains(button))
             .cloned()
