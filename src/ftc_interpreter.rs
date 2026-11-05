@@ -462,23 +462,18 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     // Resolve path helper methods independently so each follow(...) in the
     // sequential command retains its own geometry and position in the routine.
     let mut named_paths: Vec<(String, Vec<(f32, f32)>, Vec<Option<f32>>)> = Vec::new();
-    for i in 0..tokens.len().saturating_sub(3) {
-        if !tokens[i].ident_is("Path") { continue; }
-        let Some(name) = tokens.get(i + 1).and_then(Token::ident) else { continue; };
-        if !tokens.get(i + 2).is_some_and(|t| t.punct("(")) { continue; }
-        let Some(params_end) = matching(&tokens, i + 2, "(", ")") else { continue; };
-        let Some(body_open) = (params_end + 1..tokens.len()).find(|&n| tokens[n].punct("{")) else { continue; };
-        let Some(body_end) = matching(&tokens, body_open, "{", "}") else { continue; };
-        let body = &tokens[body_open + 1..body_end];
-        let Some(linear_at) = (0..body.len().saturating_sub(1)).find(|&n|
-            body[n].ident_is("linear") && body[n + 1].punct("(")
+    let java_program = crate::java_interpreter::parse_java_program(source);
+    for method in java_program.methods.iter().filter(|method| method.return_type == "Path") {
+        let method_tokens = tokenize(&strip_comments(&method.body_source));
+        let Some(linear_at) = (0..method_tokens.len().saturating_sub(1)).find(|&n|
+            method_tokens[n].ident_is("linear") && method_tokens[n + 1].punct("(")
         ) else { continue; };
-        let Some(linear_end) = matching(body, linear_at + 1, "(", ")") else { continue; };
-        let args = split_arguments(&body[linear_at + 2..linear_end]);
+        let Some(linear_end) = matching(&method_tokens, linear_at + 1, "(", ")") else { continue; };
+        let args = split_arguments(&method_tokens[linear_at + 2..linear_end]);
         let mut poses = Vec::new();
         for arg in args {
             let pose_name = tokens_to_text(arg);
-            if let Some((_, pose)) = named_poses.iter().find(|(n, _)| n == &pose_name) {
+            if let Some((_, pose)) = named_poses.iter().find(|(name, _)| name == &pose_name) {
                 poses.push(*pose);
             }
         }
@@ -486,7 +481,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
             let mut points = Vec::new();
             let mut headings = Vec::new();
             append_sampled_pose_path(&mut points, &mut headings, &poses, 24);
-            named_paths.push((name.to_owned(), points, headings));
+            named_paths.push((method.name.clone(), points, headings));
         }
     }
 
