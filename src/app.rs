@@ -1264,6 +1264,15 @@ impl VisualizerApp {
         }
 
         self.update_loose_pollen_physics(dt);
+        let objects_moving = self.field_pollen.iter().any(|element| {
+            element.vx.abs() + element.vy.abs() > 0.05
+        });
+        if objects_moving
+            || self.forward_velocity.abs() + self.strafe_velocity.abs() > 0.05
+            || self.turn_velocity.abs() > 0.05
+        {
+            ctx.request_repaint();
+        }
     }
 
     fn draw_field(&self, ui: &mut egui::Ui) {
@@ -1925,6 +1934,10 @@ impl eframe::App for VisualizerApp {
             ui.add(egui::Slider::new(&mut self.heading_deg, 0.0..=360.0).text("Heading").suffix("°"));
             });
             ui.collapsing("Simulation settings", |ui| {
+                ui.label("Physics engine: Rapier 2D");
+                ui.label("Fixed physics timestep: 120 Hz");
+                ui.label("18 × 18 in rigid-body chassis with momentum and contact friction.");
+                ui.label("Loose game elements use dynamic rigid bodies and continuous collision detection.");
                 ui.add(egui::Slider::new(&mut self.drive_speed, 0.0..=60.0).text("Test speed").suffix(" in/s"));
                 if ui.button("Reset simulation").clicked() { self.reset(); }
             });
