@@ -236,7 +236,7 @@ impl VisualizerApp {
         self.elapsed_seconds = 0.0;
         self.last_frame = Instant::now();
         self.autonomous_status = format!(
-            "Running PedroPathing route: {} sampled path points. This simulator follows extracted Bezier geometry; it does not execute Android/FTC Java bytecode.",
+            "Running interpreted FTC autonomous: {} sampled path points. Java command groups, supported method actions, and waits are simulated; Android SDK calls are not executed.",
             self.autonomous_waypoints.len()
         );
     }
