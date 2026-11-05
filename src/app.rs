@@ -360,9 +360,40 @@ impl VisualizerApp {
         let robot_speed = self.forward_velocity.hypot(self.strafe_velocity);
         let heading = self.heading_deg.to_radians();
         for pollen in &mut self.field_pollen {
-            // Scored elements are permanently secured in the hive: they remain visible,
-            // but cannot be pushed by the robot or collected again.
-            if pollen.scored { continue; }
+            // Scored elements remain inside their active scoring cell, but can
+            // drift, bounce off the hive walls, and collide with other scored pieces.
+            if pollen.scored {
+                pollen.x += pollen.vx * dt;
+                pollen.y += pollen.vy * dt;
+                let friction = (1.0 - 1.7 * dt).max(0.0);
+                pollen.vx *= friction;
+                pollen.vy *= friction;
+                let center = match pollen.hive {
+                    Some(HiveSide::Red) => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
+                    Some(HiveSide::Blue) => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
+                    None => (pollen.x, pollen.y),
+                };
+                let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
+                let min_x = min_x + pollen.radius;
+                let max_x = max_x - pollen.radius;
+                let min_y = min_y + pollen.radius;
+                let max_y = max_y - pollen.radius;
+                if pollen.x < min_x {
+                    pollen.x = min_x;
+                    pollen.vx = pollen.vx.abs() * 0.45;
+                } else if pollen.x > max_x {
+                    pollen.x = max_x;
+                    pollen.vx = -pollen.vx.abs() * 0.45;
+                }
+                if pollen.y < min_y {
+                    pollen.y = min_y;
+                    pollen.vy = pollen.vy.abs() * 0.45;
+                } else if pollen.y > max_y {
+                    pollen.y = max_y;
+                    pollen.vy = -pollen.vy.abs() * 0.45;
+                }
+                continue;
+            }
 
             // Pollen that belongs to a flower stays anchored in its stack.
             if pollen.from_flower {
@@ -432,10 +463,14 @@ impl VisualizerApp {
                 let (left, right) = self.field_pollen.split_at_mut(j);
                 let a = &mut left[i];
                 let b = &mut right[0];
-                // Flower-stack pollen is fixed, and scored elements are
-                // secured in the hive. Neither can collide with loose elements.
-                if a.from_flower || b.from_flower || a.scored || b.scored {
+                // Flower-stack pollen is fixed. Scored pieces collide with
+                // other scored pieces in the same hive, but not with loose field pieces.
+                if a.from_flower || b.from_flower {
                     continue;
+                }
+                if a.scored || b.scored {
+                    let same_scored_hive = a.scored && b.scored && a.hive.is_some() && a.hive == b.hive;
+                    if !same_scored_hive { continue; }
                 }
                 let dx = b.x - a.x;
                 let dy = b.y - a.y;
@@ -456,9 +491,24 @@ impl VisualizerApp {
             }
         }
 
+        // Re-confine scored elements after pairwise collision resolution so
+        // even a crowded hive cannot push them outside its scoring rectangle.
+        for pollen in &mut self.field_pollen {
+            if !pollen.scored { continue; }
+            let center = match pollen.hive {
+                Some(HiveSide::Red) => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
+                Some(HiveSide::Blue) => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
+                None => continue,
+            };
+            let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
+            pollen.x = pollen.x.clamp(min_x + pollen.radius, max_x - pollen.radius);
+            pollen.y = pollen.y.clamp(min_y + pollen.radius, max_y - pollen.radius);
+        }
+
         // Keep every loose pollen piece fully inside the field. Bounce it
         // gently off the boundary instead of allowing it to leave the play area.
         for pollen in &mut self.field_pollen {
+            if pollen.scored { continue; }
             let min = pollen.radius;
             let max = FIELD_SIZE_IN - pollen.radius;
             if pollen.x < min {
