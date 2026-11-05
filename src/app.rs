@@ -102,6 +102,7 @@ pub struct VisualizerApp {
     autonomous_segment_index: usize,
     autonomous_post_actions_applied: bool,
     autonomous_wait_remaining: f32,
+    autonomous_waiting_for_condition: bool,
     autonomous_running: bool,
     autonomous_status: String,
 }
@@ -152,6 +153,7 @@ impl Default for VisualizerApp {
             autonomous_segment_index: 0,
             autonomous_post_actions_applied: false,
             autonomous_wait_remaining: 0.0,
+            autonomous_waiting_for_condition: false,
             autonomous_running: false,
             autonomous_status: "No autonomous program running.".to_owned(),
         }
@@ -170,6 +172,7 @@ impl VisualizerApp {
         self.autonomous_segment_index = 0;
         self.autonomous_post_actions_applied = false;
         self.autonomous_wait_remaining = 0.0;
+        self.autonomous_waiting_for_condition = false;
         self.autonomous_status = "Autonomous stopped by reset.".to_owned();
         self.forward_velocity = 0.0; self.strafe_velocity = 0.0; self.turn_velocity = 0.0;
         self.last_frame = Instant::now();
@@ -227,6 +230,7 @@ impl VisualizerApp {
         self.autonomous_waypoint_index = 0;
         self.autonomous_post_actions_applied = false;
         self.autonomous_wait_remaining = 0.0;
+        self.autonomous_waiting_for_condition = false;
         self.autonomous_running = true;
         self.is_running = false;
         self.teleop_active = false;
@@ -913,13 +917,12 @@ impl VisualizerApp {
             } else {
                 if let Some(segment) = self.autonomous_segments.get(self.autonomous_segment_index).cloned() {
                     if !self.autonomous_post_actions_applied {
-                        // Java instant(...) commands evaluate their if-conditions
-                        // once when invoked. A failed condition is not retried
-                        // while a parallel wait is running.
+                        // waitUntil predicates are polled every simulation frame.
+                        let mut still_waiting = false;
                         for action in &segment.actions_after {
                             let current_velocity = self.flywheel_velocity;
-                            let condition_passes = action.condition.as_deref()
-                                .and_then(|condition| crate::java_interpreter::evaluate_boolean(condition, &|operand| {
+                            let resolve_condition = |condition: &str| {
+                                crate::java_interpreter::evaluate_boolean(condition, &|operand| {
                                     let key = operand.to_ascii_lowercase();
                                     if key.contains("getvelocity")
                                         && (key.contains("outtake") || key.contains("shooter") || key.contains("flywheel"))
@@ -928,7 +931,16 @@ impl VisualizerApp {
                                     } else {
                                         operand.trim().parse::<f32>().ok()
                                     }
-                                }))
+                                }).unwrap_or(false)
+                            };
+                            if let Some(wait_until) = action.wait_until.as_deref() {
+                                if !resolve_condition(wait_until) {
+                                    still_waiting = true;
+                                    continue;
+                                }
+                            }
+                            let condition_passes = action.condition.as_deref()
+                                .map(&resolve_condition)
                                 .unwrap_or_else(|| action.minimum_flywheel_velocity
                                     .is_none_or(|minimum| current_velocity >= minimum));
                             if !condition_passes { continue; }
@@ -942,8 +954,15 @@ impl VisualizerApp {
                                 _ => {}
                             }
                         }
-                        self.autonomous_post_actions_applied = true;
-                        self.autonomous_wait_remaining = segment.wait_after_ms as f32 / 1000.0;
+                        if still_waiting {
+                            self.autonomous_waiting_for_condition = true;
+                            self.autonomous_status = "Waiting for an autonomous waitUntil condition.".to_owned();
+                            ctx.request_repaint();
+                        } else {
+                            self.autonomous_waiting_for_condition = false;
+                            self.autonomous_post_actions_applied = true;
+                            self.autonomous_wait_remaining = segment.wait_after_ms as f32 / 1000.0;
+                        }
                     }
 
                     if self.autonomous_post_actions_applied {
