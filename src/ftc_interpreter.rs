@@ -512,7 +512,11 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
             path_seen = true;
             let path_name = arg.iter().enumerate().find_map(|(i, token)| {
                 if token.ident_is("follow") {
-                    arg[i + 1..].iter().find_map(|next| next.ident())
+                    arg[i + 1..].windows(2).find_map(|pair| {
+                        if pair[0].ident().is_some() && pair[1].punct("(") {
+                            pair[0].ident()
+                        } else { None }
+                    })
                 } else { None }
             });
             if let Some((_, points, headings)) = path_name.and_then(|name|
