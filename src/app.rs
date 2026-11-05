@@ -101,6 +101,8 @@ pub struct VisualizerApp {
     autonomous_segments: Vec<crate::ftc_interpreter::AutonomousPathSegment>,
     autonomous_segment_index: usize,
     autonomous_post_actions_applied: bool,
+    autonomous_action_index: usize,
+    autonomous_action_delay_started: bool,
     autonomous_wait_remaining: f32,
     autonomous_waiting_for_condition: bool,
     autonomous_running: bool,
@@ -152,6 +154,8 @@ impl Default for VisualizerApp {
             autonomous_segments: Vec::new(),
             autonomous_segment_index: 0,
             autonomous_post_actions_applied: false,
+            autonomous_action_index: 0,
+            autonomous_action_delay_started: false,
             autonomous_wait_remaining: 0.0,
             autonomous_waiting_for_condition: false,
             autonomous_running: false,
@@ -214,6 +218,8 @@ impl VisualizerApp {
         self.autonomous_segments.clear();
         self.autonomous_segment_index = 0;
         self.autonomous_post_actions_applied = false;
+        self.autonomous_action_index = 0;
+        self.autonomous_action_delay_started = false;
         self.autonomous_wait_remaining = 0.0;
         self.autonomous_waiting_for_condition = false;
         self.autonomous_status = "Simulation reset to its initial state.".to_owned();
@@ -276,6 +282,8 @@ impl VisualizerApp {
         }
         self.autonomous_waypoint_index = 0;
         self.autonomous_post_actions_applied = false;
+        self.autonomous_action_index = 0;
+        self.autonomous_action_delay_started = false;
         self.autonomous_wait_remaining = 0.0;
         self.autonomous_waiting_for_condition = false;
         self.autonomous_running = true;
@@ -964,9 +972,24 @@ impl VisualizerApp {
             } else {
                 if let Some(segment) = self.autonomous_segments.get(self.autonomous_segment_index).cloned() {
                     if !self.autonomous_post_actions_applied {
-                        // waitUntil predicates are polled every simulation frame.
-                        let mut still_waiting = false;
-                        for action in &segment.actions_after {
+                        // Execute post-path mechanism commands in source order.
+                        // A waitMs between two method calls delays the second
+                        // action instead of being moved to the end of the path.
+                        let mut blocked = false;
+                        while let Some(action) = segment.actions_after.get(self.autonomous_action_index) {
+                            if action.delay_before_ms > 0 && !self.autonomous_action_delay_started {
+                                self.autonomous_wait_remaining = action.delay_before_ms as f32 / 1000.0;
+                                self.autonomous_action_delay_started = true;
+                            }
+                            if self.autonomous_action_delay_started {
+                                self.autonomous_wait_remaining = (self.autonomous_wait_remaining - dt).max(0.0);
+                                if self.autonomous_wait_remaining > 0.0 {
+                                    blocked = true;
+                                    break;
+                                }
+                                self.autonomous_action_delay_started = false;
+                            }
+
                             let current_velocity = self.flywheel_velocity;
                             let resolve_condition = |condition: &str| {
                                 crate::java_interpreter::evaluate_boolean(condition, &|operand| {
@@ -982,15 +1005,21 @@ impl VisualizerApp {
                             };
                             if let Some(wait_until) = action.wait_until.as_deref() {
                                 if !resolve_condition(wait_until) {
-                                    still_waiting = true;
-                                    continue;
+                                    self.autonomous_waiting_for_condition = true;
+                                    self.autonomous_status = "Waiting for an autonomous waitUntil condition.".to_owned();
+                                    blocked = true;
+                                    break;
                                 }
                             }
                             let condition_passes = action.condition.as_deref()
                                 .map(&resolve_condition)
                                 .unwrap_or_else(|| action.minimum_flywheel_velocity
                                     .is_none_or(|minimum| current_velocity >= minimum));
-                            if !condition_passes { continue; }
+                            if !condition_passes {
+                                blocked = true;
+                                break;
+                            }
+
                             let value = action.value.unwrap_or(0.0);
                             match action.role {
                                 crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
@@ -1000,15 +1029,16 @@ impl VisualizerApp {
                                 }
                                 _ => {}
                             }
+                            self.autonomous_waiting_for_condition = false;
+                            self.autonomous_action_index += 1;
                         }
-                        if still_waiting {
-                            self.autonomous_waiting_for_condition = true;
-                            self.autonomous_status = "Waiting for an autonomous waitUntil condition.".to_owned();
-                            ctx.request_repaint();
-                        } else {
+
+                        if !blocked && self.autonomous_action_index >= segment.actions_after.len() {
                             self.autonomous_waiting_for_condition = false;
                             self.autonomous_post_actions_applied = true;
                             self.autonomous_wait_remaining = segment.wait_after_ms as f32 / 1000.0;
+                        } else if blocked {
+                            ctx.request_repaint();
                         }
                     }
 
@@ -1017,6 +1047,8 @@ impl VisualizerApp {
                         if self.autonomous_wait_remaining <= 0.0 {
                             self.autonomous_segment_index += 1;
                             self.autonomous_post_actions_applied = false;
+                            self.autonomous_action_index = 0;
+                            self.autonomous_action_delay_started = false;
                             if let Some(next) = self.autonomous_segments.get(self.autonomous_segment_index) {
                                 self.autonomous_waypoints = next.waypoints.clone();
                                 self.autonomous_headings = next.headings.clone();
