@@ -335,8 +335,8 @@ impl VisualizerApp {
         let launch_y=self.robot_y+heading.cos()*(ROBOT_SIZE_IN*0.5+1.0);
         let red_center=hive_pair_centers(HiveSide::Red,self.red_hive_tipped).0;
         let blue_center=hive_pair_centers(HiveSide::Blue,self.blue_hive_tipped).0;
-        let can_score_red=point_in_scoring_cone((launch_x,launch_y),red_center,HiveSide::Red);
-        let can_score_blue=point_in_scoring_cone((launch_x,launch_y),blue_center,HiveSide::Blue);
+        let can_score_red=point_in_scoring_cone((launch_x,launch_y),red_center,HiveSide::Red,self.red_hive_tipped);
+        let can_score_blue=point_in_scoring_cone((launch_x,launch_y),blue_center,HiveSide::Blue,self.blue_hive_tipped);
         if !can_score_red && !can_score_blue {
             self.pollen_status="Shot blocked: the robot must be inside a visible scoring cone.".to_owned();
             return;
@@ -796,7 +796,7 @@ impl VisualizerApp {
             (HiveSide::Red, hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0, Color32::from_rgb(235, 65, 75)),
             (HiveSide::Blue, hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0, Color32::from_rgb(65, 145, 255)),
         ] {
-            let world_points = scoring_cone_polygon(cone_center, side);
+            let world_points = scoring_cone_polygon(cone_center, side, match side { HiveSide::Red => self.red_hive_tipped, HiveSide::Blue => self.blue_hive_tipped });
             let screen_points = world_points.into_iter().map(|(x, y)| {
                 Pos2::new(field.left() + x * scale, field.bottom() - y * scale)
             }).collect::<Vec<_>>();
@@ -987,11 +987,12 @@ fn hive_cell_bounds(center: (f32, f32)) -> (f32, f32, f32, f32) {
     (min_x, max_x, min_y, max_y)
 }
 
-fn point_in_scoring_cone(point: (f32, f32), center: (f32, f32), side: HiveSide) -> bool {
-    let (axis_x, axis_y) = match side {
+fn point_in_scoring_cone(point: (f32, f32), center: (f32, f32), side: HiveSide, tipped: bool) -> bool {
+    let (mut axis_x, mut axis_y) = match side {
         HiveSide::Red => (0.0_f32, -1.0_f32),
         HiveSide::Blue => (0.0_f32, 1.0_f32),
     };
+    if tipped { axis_x = -axis_x; axis_y = -axis_y; }
     let dx = point.0 - center.0;
     let dy = point.1 - center.1;
     let forward = dx * axis_x + dy * axis_y;
@@ -1002,11 +1003,12 @@ fn point_in_scoring_cone(point: (f32, f32), center: (f32, f32), side: HiveSide) 
         && point.1 >= 0.0 && point.1 <= FIELD_SIZE_IN
 }
 
-fn scoring_cone_polygon(center: (f32, f32), side: HiveSide) -> Vec<(f32, f32)> {
-    let axis_angle = match side {
+fn scoring_cone_polygon(center: (f32, f32), side: HiveSide, tipped: bool) -> Vec<(f32, f32)> {
+    let mut axis_angle = match side {
         HiveSide::Red => -std::f32::consts::FRAC_PI_2,
         HiveSide::Blue => std::f32::consts::FRAC_PI_2,
     };
+    if tipped { axis_angle += std::f32::consts::PI; }
     let half_angle = std::f32::consts::PI / 3.0;
     let mut points = vec![center];
 
