@@ -596,7 +596,7 @@ fn minimum_flywheel_velocity_for_command(
         }
         for pair in condition.windows(2) {
             if pair[0].punct(">") {
-                if let Some(value) = resolve_number(source, &tokens_to_text(&pair[1..])) {
+                if let Some(value) = resolve_number(source, &pair[1].text) {
                     required = Some(required.map_or(value, |old: f32| old.max(value)));
                 }
             }
