@@ -191,6 +191,8 @@ pub enum JavaStatement {
         then_branch: Box<JavaStatement>,
         else_branch: Option<Box<JavaStatement>>,
     },
+    For { initializer: Option<String>, condition: Option<String>, update: Option<String>, body: Box<JavaStatement> },
+    While { condition: String, body: Box<JavaStatement> },
     Return(Option<String>),
     Expression(String),
     Empty,
@@ -353,12 +355,48 @@ fn parse_java_block(tokens: &[JavaToken], open: usize, close: usize, source: &st
     JavaStatement::Block(statements)
 }
 
+fn split_loop_header(header: &str) -> Vec<String> {
+    let bytes = header.as_bytes();
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut depth = 0_i32;
+    for (i, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            b';' if depth == 0 => { parts.push(header[start..i].trim().to_owned()); start = i + 1; }
+            _ => {}
+        }
+    }
+    parts.push(header[start..].trim().to_owned());
+    parts
+}
+
 fn parse_java_statement(tokens: &[JavaToken], start: usize, limit: usize, source: &str) -> (JavaStatement, usize) {
     if start >= limit { return (JavaStatement::Empty, limit); }
     if tokens[start].text == ";" { return (JavaStatement::Empty, start + 1); }
     if tokens[start].text == "{" {
         if let Some(end) = match_java(tokens, start, "{", "}") {
             return (parse_java_block(tokens, start, end, source), end + 1);
+        }
+    }
+    if (tokens[start].text == "for" || tokens[start].text == "while")
+        && tokens.get(start + 1).is_some_and(|t| t.text == "(")
+    {
+        let is_for = tokens[start].text == "for";
+        if let Some(condition_end) = match_java(tokens, start + 1, "(", ")") {
+            let header = &source[tokens[start + 1].end..tokens[condition_end].start];
+            let (initializer, condition, update) = if is_for {
+                let parts = split_loop_header(header);
+                (parts.first().cloned(), parts.get(1).cloned(), parts.get(2).cloned())
+            } else { (None, Some(header.trim().to_owned()), None) };
+            let (body, next) = parse_java_statement(tokens, condition_end + 1, limit, source);
+            let statement = if is_for {
+                JavaStatement::For { initializer, condition, update, body: Box::new(body) }
+            } else {
+                JavaStatement::While { condition: condition.unwrap_or_default(), body: Box::new(body) }
+            };
+            return (statement, next);
         }
     }
     if tokens[start].text == "if" && tokens.get(start + 1).is_some_and(|t| t.text == "(") {
@@ -437,6 +475,21 @@ mod java_ast_tests {
         assert!(program.methods.iter().any(|m| m.name == "startup"));
         assert!(program.methods.iter().any(|m| m.name == "routine"));
     }
+    #[test]
+    fn parses_for_and_while_loops() {
+        let source = r#"
+            private void loop() {
+                for (int i = 0; i < 4; i++) { intake.setPower(1); }
+                while (active) { follower.update(); }
+            }
+        "#;
+        let program = parse_java_program(source);
+        let method = program.methods.iter().find(|m| m.name == "loop").unwrap();
+        assert!(matches!(&method.body, JavaStatement::Block(statements)
+            if matches!(statements.first(), Some(JavaStatement::For { .. }))
+            && matches!(statements.get(1), Some(JavaStatement::While { .. }))));
+    }
+
 }
 
 
