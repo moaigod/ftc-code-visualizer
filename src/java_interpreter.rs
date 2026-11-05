@@ -304,7 +304,7 @@ fn lex_java(source: &str) -> Vec<JavaToken> {
             let quote = b;
             i += 1;
             while i < bytes.len() {
-                if bytes[i] == b'\\\\' { i = (i + 2).min(bytes.len()); }
+                if bytes[i] == b'\\' { i = (i + 2).min(bytes.len()); }
                 else if bytes[i] == quote { i += 1; break; }
                 else { i += 1; }
             }
@@ -600,7 +600,7 @@ fn strip_outer_parentheses(mut expression: &str) -> &str {
         for (i, &b) in bytes.iter().enumerate() {
             if quote != 0 {
                 if escaped { escaped = false; }
-                else if b == b'\\\\' { escaped = true; }
+                else if b == b'\\' { escaped = true; }
                 else if b == quote { quote = 0; }
                 continue;
             }
@@ -627,7 +627,7 @@ fn split_boolean_operator<'a>(expression: &'a str, operator: &str) -> Option<(&'
         let b = bytes[i];
         if quote != 0 {
             if escaped { escaped = false; }
-            else if b == b'\\\\' { escaped = true; }
+            else if b == b'\\' { escaped = true; }
             else if b == quote { quote = 0; }
             i += 1; continue;
         }
