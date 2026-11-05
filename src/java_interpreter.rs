@@ -130,14 +130,14 @@ fn strip_comments(source: &str) -> String {
         if let Some(active_quote) = quote {
             out.push(c);
             if escaped { escaped = false; }
-            else if c == '\\\\' { escaped = true; }
+            else if c == '\\' { escaped = true; }
             else if c == active_quote { quote = None; }
-        } else if c == '"' || c == '\\'' {
+        } else if c == '"' || c == '\'' {
             quote = Some(c);
             out.push(c);
         } else if c == '/' && chars.peek() == Some(&'/') {
             while let Some(next) = chars.next() {
-                if next == '\\n' { out.push('\\n'); break; }
+                if next == '\n' { out.push('\n'); break; }
             }
         } else if c == '/' && chars.peek() == Some(&'*') {
             chars.next();
