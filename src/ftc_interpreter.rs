@@ -657,9 +657,21 @@ fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(Strin
         for p in 0..body.len().saturating_sub(4) {
             if !body[p].ident_is("instant") || !body[p + 1].punct("(") { continue; }
             let Some(instant_end) = matching(&body, p + 1, "(", ")") else { continue; };
-            let Some(lambda_open) = (p + 2..instant_end).find(|&n| body[n].punct("{")) else { continue; };
-            let Some(lambda_end) = matching(&body, lambda_open, "{", "}") else { continue; };
-            for command_at in lambda_open + 1..lambda_end {
+            // Support both block lambdas (() -> { ... }) and expression
+            // lambdas (() -> motor.setPower(...)). FTC command helpers commonly
+            // use expression lambdas for one-line mechanism actions.
+            let Some(arrow) = (p + 2..instant_end.saturating_sub(1))
+                .find(|&n| body[n].punct("-") && body.get(n + 1).is_some_and(|t| t.punct(">")))
+            else { continue; };
+            let (lambda_open, lambda_start, lambda_end) =
+                if body.get(arrow + 2).is_some_and(|t| t.punct("{")) {
+                    let open = arrow + 2;
+                    let Some(end) = matching(&body, open, "{", "}") else { continue; };
+                    (open, open + 1, end)
+                } else {
+                    (arrow + 1, arrow + 2, instant_end)
+                };
+            for command_at in lambda_start..lambda_end {
                 let Some(variable) = body[command_at].ident() else { continue; };
                 let mut member_at = command_at + 1;
                 while member_at < lambda_end && member_at <= command_at + 3 && body[member_at].punct(")") { member_at += 1; }
