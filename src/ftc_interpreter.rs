@@ -469,19 +469,51 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     let java_program = crate::java_interpreter::parse_java_program(source);
     for method in java_program.methods.iter().filter(|method| method.return_type == "Path") {
         let method_tokens = tokenize(&strip_comments(&method.body_source));
-        let Some(linear_at) = (0..method_tokens.len().saturating_sub(1)).find(|&n|
-            method_tokens[n].ident_is("linear") && method_tokens[n + 1].punct("(")
-        ) else { continue; };
-        let Some(linear_end) = matching(&method_tokens, linear_at + 1, "(", ")") else { continue; };
-        let args = split_arguments(&method_tokens[linear_at + 2..linear_end]);
-        let mut poses = Vec::new();
-        for arg in args {
-            let pose_name = tokens_to_text(arg);
-            if let Some((_, pose)) = named_poses.iter().find(|(name, _)| name == &pose_name) {
-                poses.push(*pose);
+        let resolve_pose_args = |call_name: &str| -> Option<Vec<(f32, f32, f32)>> {
+            let call_at = (0..method_tokens.len().saturating_sub(1)).find(|&n|
+                method_tokens[n].ident_is(call_name) && method_tokens[n + 1].punct("(")
+            )?;
+            let call_end = matching(&method_tokens, call_at + 1, "(", ")")?;
+            let mut poses = Vec::new();
+            for arg in split_arguments(&method_tokens[call_at + 2..call_end]) {
+                let pose_name = tokens_to_text(arg);
+                if let Some((_, pose)) = named_poses.iter().find(|(name, _)| name == &pose_name) {
+                    poses.push(*pose);
+                }
             }
+            Some(poses)
+        };
+
+        // curve(start, control, end) supplies the actual quadratic Bezier
+        // geometry. A chained linear(start, end), when present, supplies the
+        // robot heading interpolation independently of that geometry.
+        if let Some(curve_poses) = resolve_pose_args("curve").filter(|poses| poses.len() >= 3) {
+            let heading_poses = resolve_pose_args("linear").unwrap_or_default();
+            let mut points = Vec::new();
+            let mut headings = Vec::new();
+            let samples = 48;
+            let heading_start = heading_poses.first().map(|pose| pose.2)
+                .or_else(|| curve_poses.first().map(|pose| pose.2)).unwrap_or(0.0);
+            let heading_end = heading_poses.last().map(|pose| pose.2)
+                .or_else(|| curve_poses.last().map(|pose| pose.2)).unwrap_or(heading_start);
+            let mut heading_delta = (heading_end - heading_start + std::f32::consts::PI)
+                .rem_euclid(2.0 * std::f32::consts::PI) - std::f32::consts::PI;
+            if heading_delta <= -std::f32::consts::PI { heading_delta = std::f32::consts::PI; }
+            for step in 0..=samples {
+                let t = step as f32 / samples as f32;
+                let u = 1.0 - t;
+                let x = u*u*curve_poses[0].0 + 2.0*u*t*curve_poses[1].0 + t*t*curve_poses[2].0;
+                let y = u*u*curve_poses[0].1 + 2.0*u*t*curve_poses[1].1 + t*t*curve_poses[2].1;
+                if points.last().is_none_or(|last| (last.0-x).hypot(last.1-y) > 0.05) {
+                    points.push((x, y));
+                    headings.push(Some(heading_start + heading_delta * t));
+                }
+            }
+            named_paths.push((method.name.clone(), points, headings));
+            continue;
         }
-        if poses.len() >= 2 {
+
+        if let Some(poses) = resolve_pose_args("linear").filter(|poses| poses.len() >= 2) {
             let mut points = Vec::new();
             let mut headings = Vec::new();
             append_sampled_pose_path(&mut points, &mut headings, &poses, 24);
