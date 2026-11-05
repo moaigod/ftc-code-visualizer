@@ -98,6 +98,8 @@ pub struct VisualizerApp {
     autonomous_waypoints: Vec<(f32, f32)>,
     autonomous_headings: Vec<Option<f32>>,
     autonomous_waypoint_index: usize,
+    autonomous_segments: Vec<crate::ftc_interpreter::AutonomousPathSegment>,
+    autonomous_segment_index: usize,
     autonomous_post_actions_applied: bool,
     autonomous_wait_remaining: f32,
     autonomous_running: bool,
@@ -146,6 +148,8 @@ impl Default for VisualizerApp {
             autonomous_waypoints: Vec::new(),
             autonomous_headings: Vec::new(),
             autonomous_waypoint_index: 0,
+            autonomous_segments: Vec::new(),
+            autonomous_segment_index: 0,
             autonomous_post_actions_applied: false,
             autonomous_wait_remaining: 0.0,
             autonomous_running: false,
@@ -162,6 +166,8 @@ impl VisualizerApp {
         self.autonomous_waypoints.clear();
         self.autonomous_headings.clear();
         self.autonomous_waypoint_index = 0;
+        self.autonomous_segments.clear();
+        self.autonomous_segment_index = 0;
         self.autonomous_post_actions_applied = false;
         self.autonomous_wait_remaining = 0.0;
         self.autonomous_status = "Autonomous stopped by reset.".to_owned();
@@ -195,8 +201,15 @@ impl VisualizerApp {
             // zero degrees toward +Y and positive rotation toward +X.
             self.heading_deg = (90.0 - heading_rad.to_degrees()).rem_euclid(360.0);
         }
-        self.autonomous_waypoints = plan.waypoints;
-        self.autonomous_headings = plan.waypoint_headings;
+        self.autonomous_segments = plan.path_segments.clone();
+        self.autonomous_segment_index = 0;
+        if let Some(first) = self.autonomous_segments.first() {
+            self.autonomous_waypoints = first.waypoints.clone();
+            self.autonomous_headings = first.headings.clone();
+        } else {
+            self.autonomous_waypoints = plan.waypoints;
+            self.autonomous_headings = plan.waypoint_headings;
+        }
         self.intake_running = false;
         self.feeder_running = false;
         self.flywheel_target_velocity = 0.0;
@@ -213,7 +226,7 @@ impl VisualizerApp {
         }
         self.autonomous_waypoint_index = 0;
         self.autonomous_post_actions_applied = false;
-        self.autonomous_wait_remaining = plan.post_path_wait_ms as f32 / 1000.0;
+        self.autonomous_wait_remaining = 0.0;
         self.autonomous_running = true;
         self.is_running = false;
         self.teleop_active = false;
@@ -890,63 +903,72 @@ impl VisualizerApp {
                 self.elapsed_seconds += dt;
                 ctx.request_repaint();
             } else {
-                let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) else {
-                    self.autonomous_running = false;
-                    return;
-                };
-                let plan = crate::ftc_interpreter::interpret_autonomous(&mode.source);
-
-                if !self.autonomous_post_actions_applied {
-                    let conditions_ready = plan.post_path_actions.iter().all(|action| {
-                        action.minimum_flywheel_velocity
-                            .is_none_or(|minimum| self.flywheel_velocity >= minimum)
-                    });
-                    if conditions_ready {
-                        for action in &plan.post_path_actions {
-                            let value = action.value.unwrap_or(0.0);
-                            match action.role {
-                                crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
-                                crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => self.feeder_running = value > 0.0,
-                                crate::ftc_interpreter::MotorRole::Outtake if action.method == "setVelocity" => {
-                                    self.flywheel_target_velocity = self.flywheel_target_velocity.max(value.max(0.0));
+                if let Some(segment) = self.autonomous_segments.get(self.autonomous_segment_index).cloned() {
+                    if !self.autonomous_post_actions_applied {
+                        let conditions_ready = segment.actions_after.iter().all(|action| {
+                            action.minimum_flywheel_velocity
+                                .is_none_or(|minimum| self.flywheel_velocity >= minimum)
+                        });
+                        if conditions_ready {
+                            for action in &segment.actions_after {
+                                let value = action.value.unwrap_or(0.0);
+                                match action.role {
+                                    crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
+                                    crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => self.feeder_running = value > 0.0,
+                                    crate::ftc_interpreter::MotorRole::Outtake if action.method == "setVelocity" => {
+                                        self.flywheel_target_velocity = self.flywheel_target_velocity.max(value.max(0.0));
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
-                        }
-                        self.autonomous_post_actions_applied = true;
-                    } else {
-                        self.autonomous_status = format!(
-                            "Waiting for flywheel to reach {:.0} ticks/s before activating the feeder.",
-                            plan.post_path_actions.iter()
-                                .filter_map(|action| action.minimum_flywheel_velocity)
-                                .fold(0.0_f32, f32::max)
-                        );
-                        ctx.request_repaint();
-                    }
-                }
-
-                if self.autonomous_post_actions_applied {
-                    self.autonomous_wait_remaining = (self.autonomous_wait_remaining - dt).max(0.0);
-                    if self.autonomous_wait_remaining <= 0.0 {
-                        self.autonomous_running = false;
-                        self.forward_velocity = 0.0;
-                        self.strafe_velocity = 0.0;
-                        self.autonomous_status = if plan.post_path_actions.is_empty() {
-                            "Autonomous path complete. No post-path mechanism actions were recognized.".to_owned()
-                        } else if plan.post_path_wait_ms > 0 {
-                            format!("Autonomous complete. Post-path commands ran; waited {} ms.", plan.post_path_wait_ms)
+                            self.autonomous_post_actions_applied = true;
+                            self.autonomous_wait_remaining = segment.wait_after_ms as f32 / 1000.0;
                         } else {
-                            "Autonomous path complete. Post-path mechanism commands activated.".to_owned()
-                        };
-                    } else {
-                        self.autonomous_status = format!(
-                            "Post-path wait: {:.1} seconds remaining.",
-                            self.autonomous_wait_remaining
-                        );
-                        ctx.request_repaint();
+                            self.autonomous_status = format!(
+                                "Waiting for flywheel to reach {:.0} ticks/s before the next autonomous step.",
+                                segment.actions_after.iter()
+                                    .filter_map(|action| action.minimum_flywheel_velocity)
+                                    .fold(0.0_f32, f32::max)
+                            );
+                            ctx.request_repaint();
+                        }
                     }
+
+                    if self.autonomous_post_actions_applied {
+                        self.autonomous_wait_remaining = (self.autonomous_wait_remaining - dt).max(0.0);
+                        if self.autonomous_wait_remaining <= 0.0 {
+                            self.autonomous_segment_index += 1;
+                            self.autonomous_post_actions_applied = false;
+                            if let Some(next) = self.autonomous_segments.get(self.autonomous_segment_index) {
+                                self.autonomous_waypoints = next.waypoints.clone();
+                                self.autonomous_headings = next.headings.clone();
+                                self.autonomous_waypoint_index = 0;
+                                self.forward_velocity = 0.0;
+                                self.autonomous_status = format!(
+                                    "Starting autonomous path {} of {}.",
+                                    self.autonomous_segment_index + 1,
+                                    self.autonomous_segments.len()
+                                );
+                                ctx.request_repaint();
+                            } else {
+                                self.autonomous_running = false;
+                                self.forward_velocity = 0.0;
+                                self.strafe_velocity = 0.0;
+                                self.autonomous_status = "Autonomous sequence complete. All paths and waits finished.".to_owned();
+                            }
+                        } else {
+                            self.autonomous_status = format!(
+                                "Waiting at the end of path {}: {:.1} seconds remaining.",
+                                self.autonomous_segment_index + 1,
+                                self.autonomous_wait_remaining
+                            );
+                            ctx.request_repaint();
+                        }
+                    }
+                } else {
+                    self.autonomous_running = false;
+                    self.autonomous_status = "Autonomous path complete.".to_owned();
                 }
-            }
         } else if self.teleop_active {
             self.poll_controller();
 
