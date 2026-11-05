@@ -83,7 +83,7 @@ fn split_top_level(source: &str) -> Vec<&str> {
             else if b == quote { quote = 0; }
             continue;
         }
-        if b == b'"' || b == b'\\'' { quote = b; continue; }
+        if b == b'"' || b == b'\'' { quote = b; continue; }
         match b {
             b'(' => paren += 1, b')' => paren -= 1,
             b'{' => brace += 1, b'}' => brace -= 1,
@@ -111,7 +111,7 @@ fn matching_delimiter(source: &str, start: usize, open: u8, close: u8) -> Option
             else if b == quote { quote = 0; }
             continue;
         }
-        if b == b'"' || b == b'\\'' { quote = b; continue; }
+        if b == b'"' || b == b'\'' { quote = b; continue; }
         if b == open { depth += 1; }
         if b == close {
             depth -= 1;
@@ -300,7 +300,7 @@ fn lex_java(source: &str) -> Vec<JavaToken> {
         let start = i;
         let b = bytes[i];
         let kind;
-        if b == b'"' || b == b'\\'' {
+        if b == b'"' || b == b'\'' {
             let quote = b;
             i += 1;
             while i < bytes.len() {
