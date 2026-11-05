@@ -1898,30 +1898,30 @@ impl eframe::App for VisualizerApp {
                     ui.label("Import and select an OpMode to interpret its FTC hardware and commands.");
                 }
             });
-            ui.add_space(8.0);
-            ui.heading("OpMode telemetry");
-            if let Some(index) = self.selected_op_mode {
-                if let Some(mode) = self.op_modes.get(index) {
-                    if mode.telemetry.is_empty() {
-                        ui.label("No telemetry.addData() or telemetry.addLine() calls detected in this OpMode.");
-                    } else {
-                        egui::ScrollArea::vertical().id_salt("telemetry_scroll").max_height(260.0).auto_shrink([false, false]).show(ui, |ui| {
-                            for item in &mode.telemetry {
-                                if item.expression.is_empty() {
-                                    ui.label(&item.caption);
-                                } else {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.strong(format!("{}:", item.caption));
-                                        ui.label(self.telemetry_value(&item.expression));
-                                    });
+            ui.collapsing("OpMode telemetry", |ui| {
+                if let Some(index) = self.selected_op_mode {
+                    if let Some(mode) = self.op_modes.get(index) {
+                        if mode.telemetry.is_empty() {
+                            ui.label("No telemetry.addData() or telemetry.addLine() calls detected in this OpMode.");
+                        } else {
+                            egui::ScrollArea::vertical().id_salt("telemetry_scroll").max_height(220.0).auto_shrink([false, false]).show(ui, |ui| {
+                                for item in &mode.telemetry {
+                                    if item.expression.is_empty() {
+                                        ui.label(&item.caption);
+                                    } else {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.strong(format!("{}:", item.caption));
+                                            ui.label(self.telemetry_value(&item.expression));
+                                        });
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
                     }
+                } else {
+                    ui.label("Select an OpMode to inspect its telemetry calls.");
                 }
-            } else {
-                ui.label("Select an OpMode to inspect its telemetry calls.");
-            }
+            });
 
 
             ui.add_space(12.0);
