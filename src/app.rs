@@ -162,9 +162,52 @@ impl Default for VisualizerApp {
 
 impl VisualizerApp {
     fn reset(&mut self) {
-        self.robot_x = 24.0; self.robot_y = 24.0; self.heading_deg = 0.0;
-        self.elapsed_seconds = 0.0; self.is_running = false; self.teleop_active = false;
+        // Restore the simulated match to the same initial state every time.
+        // Keep imported project selection and user configuration (test speed,
+        // shooter scale, controller selection) intact.
+        self.robot_x = 24.0;
+        self.robot_y = 24.0;
+        self.heading_deg = 0.0;
+        self.elapsed_seconds = 0.0;
+        self.is_running = false;
+        self.teleop_active = false;
         self.autonomous_running = false;
+
+        self.stick_forward = 0.0;
+        self.stick_strafe = 0.0;
+        self.stick_turn = 0.0;
+        self.forward_velocity = 0.0;
+        self.strafe_velocity = 0.0;
+        self.turn_velocity = 0.0;
+        self.drive_wheel_power = [0.0; 4];
+        self.drive_wheel_velocity = [0.0; 4];
+        self.previous_gamepad_buttons.clear();
+
+        self.carried_elements = vec![
+            CarriedElement { kind: ElementKind::Pollen, hive: None };
+            MAX_POLLEN as usize
+        ];
+        self.field_pollen = starting_field_pollen();
+        self.pollen_projectile = None;
+        self.pollen_status = "4 preloaded pollen onboard.".to_owned();
+        self.flower_intake_cooldown = 0.0;
+        self.intake_running = false;
+        self.feeder_running = false;
+        self.flywheel_velocity = 0.0;
+        self.flywheel_target_velocity = 0.0;
+        self.shot_cooldown = 0.0;
+        self.intake_cycle_timer = 0.0;
+        self.shot_sequence = 0;
+
+        self.red_hive_pollen = 0;
+        self.blue_hive_pollen = 0;
+        self.red_hive_extra_nectar = 0;
+        self.blue_hive_extra_nectar = 0;
+        self.red_hive_tipped = false;
+        self.blue_hive_tipped = false;
+        self.red_hive_tip_count = 0;
+        self.blue_hive_tip_count = 0;
+
         self.autonomous_waypoints.clear();
         self.autonomous_headings.clear();
         self.autonomous_waypoint_index = 0;
@@ -173,8 +216,7 @@ impl VisualizerApp {
         self.autonomous_post_actions_applied = false;
         self.autonomous_wait_remaining = 0.0;
         self.autonomous_waiting_for_condition = false;
-        self.autonomous_status = "Autonomous stopped by reset.".to_owned();
-        self.forward_velocity = 0.0; self.strafe_velocity = 0.0; self.turn_velocity = 0.0;
+        self.autonomous_status = "Simulation reset to its initial state.".to_owned();
         self.last_frame = Instant::now();
     }
 
@@ -196,6 +238,11 @@ impl VisualizerApp {
             self.autonomous_status = plan.diagnostics.join(" ");
             return;
         }
+
+        // A rerun starts a fresh match: restore the field, robot, cargo,
+        // scoring state, mechanisms, timers, and path execution before
+        // applying this OpMode's configured starting pose and startup actions.
+        self.reset();
 
         if let Some((x, y, heading_rad)) = plan.start_pose {
             self.robot_x = x.clamp(9.0, FIELD_SIZE_IN - 9.0);
