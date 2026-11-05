@@ -95,6 +95,10 @@ pub struct VisualizerApp {
     blue_hive_tipped: bool,
     red_hive_tip_count: u32,
     blue_hive_tip_count: u32,
+    autonomous_waypoints: Vec<(f32, f32)>,
+    autonomous_waypoint_index: usize,
+    autonomous_running: bool,
+    autonomous_status: String,
 }
 
 impl Default for VisualizerApp {
@@ -136,6 +140,10 @@ impl Default for VisualizerApp {
             blue_hive_tipped: false,
             red_hive_tip_count: 0,
             blue_hive_tip_count: 0,
+            autonomous_waypoints: Vec::new(),
+            autonomous_waypoint_index: 0,
+            autonomous_running: false,
+            autonomous_status: "No autonomous program running.".to_owned(),
         }
     }
 }
@@ -144,8 +152,54 @@ impl VisualizerApp {
     fn reset(&mut self) {
         self.robot_x = 24.0; self.robot_y = 24.0; self.heading_deg = 0.0;
         self.elapsed_seconds = 0.0; self.is_running = false; self.teleop_active = false;
+        self.autonomous_running = false;
+        self.autonomous_waypoints.clear();
+        self.autonomous_waypoint_index = 0;
+        self.autonomous_status = "Autonomous stopped by reset.".to_owned();
         self.forward_velocity = 0.0; self.strafe_velocity = 0.0; self.turn_velocity = 0.0;
         self.last_frame = Instant::now();
+    }
+
+    fn run_autonomous(&mut self) {
+        let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) else {
+            self.autonomous_status = "Select an @Autonomous OpMode first.".to_owned();
+            return;
+        };
+        if mode.kind != "Autonomous" {
+            self.autonomous_status = "The selected OpMode is not annotated @Autonomous.".to_owned();
+            return;
+        }
+        let plan = crate::ftc_interpreter::interpret_autonomous(&mode.source);
+        if plan.waypoints.is_empty() {
+            self.autonomous_status = plan.diagnostics.join(" ");
+            return;
+        }
+        if !mode.source.contains("followPath") {
+            self.autonomous_status = plan.diagnostics.join(" ");
+            return;
+        }
+
+        if let Some((x, y, heading_rad)) = plan.start_pose {
+            self.robot_x = x.clamp(9.0, FIELD_SIZE_IN - 9.0);
+            self.robot_y = y.clamp(9.0, FIELD_SIZE_IN - 9.0);
+            // PedroPathing heading is radians from +X; the field view uses
+            // zero degrees toward +Y and positive rotation toward +X.
+            self.heading_deg = (90.0 - heading_rad.to_degrees()).rem_euclid(360.0);
+        }
+        self.autonomous_waypoints = plan.waypoints;
+        self.autonomous_waypoint_index = 0;
+        self.autonomous_running = true;
+        self.is_running = false;
+        self.teleop_active = false;
+        self.forward_velocity = 0.0;
+        self.strafe_velocity = 0.0;
+        self.turn_velocity = 0.0;
+        self.elapsed_seconds = 0.0;
+        self.last_frame = Instant::now();
+        self.autonomous_status = format!(
+            "Running PedroPathing route: {} sampled path points. This simulator follows extracted Bezier geometry; it does not execute Android/FTC Java bytecode.",
+            self.autonomous_waypoints.len()
+        );
     }
 
     fn import_project(&mut self) {
@@ -773,7 +827,31 @@ impl VisualizerApp {
             ctx.request_repaint();
         }
 
-        if self.teleop_active {
+        if self.autonomous_running {
+            if let Some(target) = self.autonomous_waypoints.get(self.autonomous_waypoint_index).copied() {
+                let dx = target.0 - self.robot_x;
+                let dy = target.1 - self.robot_y;
+                let distance = dx.hypot(dy);
+                if distance <= 1.0 {
+                    self.robot_x = target.0;
+                    self.robot_y = target.1;
+                    self.autonomous_waypoint_index += 1;
+                } else {
+                    let speed = 34.0_f32.min(distance * 2.2);
+                    self.robot_x += dx / distance * speed * dt;
+                    self.robot_y += dy / distance * speed * dt;
+                    self.heading_deg = dx.atan2(dy).to_degrees().rem_euclid(360.0);
+                }
+                self.resolve_robot_wall_collisions();
+                self.elapsed_seconds += dt;
+                ctx.request_repaint();
+            } else {
+                self.autonomous_running = false;
+                self.forward_velocity = 0.0;
+                self.strafe_velocity = 0.0;
+                self.autonomous_status = "Autonomous path complete.".to_owned();
+            }
+        } else if self.teleop_active {
             self.poll_controller();
 
             // Mecanum inverse kinematics: mix chassis commands into four wheel powers.
@@ -1442,7 +1520,20 @@ impl eframe::App for VisualizerApp {
             if let Some(index) = self.selected_op_mode {
                 if let Some(mode) = self.op_modes.get(index) {
                     if mode.kind == "Autonomous" {
-                        ui.colored_label(Color32::YELLOW, "Autonomous execution is not implemented yet. This OpMode is currently source-preview only.");
+                        ui.label("PedroPathing autonomous route execution");
+                        if ui.button(if self.autonomous_running { "Autonomous running…" } else { "Run Autonomous" }).clicked() {
+                            self.run_autonomous();
+                        }
+                        if self.autonomous_running && ui.button("Stop Autonomous").clicked() {
+                            self.autonomous_running = false;
+                            self.forward_velocity = 0.0;
+                            self.strafe_velocity = 0.0;
+                            self.autonomous_status = "Autonomous stopped.".to_owned();
+                        }
+                        ui.label(&self.autonomous_status);
+                        if self.autonomous_running {
+                            ui.label(format!("Path point: {}/{}", self.autonomous_waypoint_index + 1, self.autonomous_waypoints.len()));
+                        }
                     }
                 }
             }
