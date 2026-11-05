@@ -331,6 +331,13 @@ pub struct AutonomousMechanismAction {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct AutonomousPathSegment {
+    pub waypoints: Vec<(f32, f32)>,
+    pub headings: Vec<Option<f32>>,
+    pub wait_after_ms: u64,
+    pub actions_after: Vec<AutonomousMechanismAction>,
+}
+
 pub struct AutonomousPlan {
     pub start_pose: Option<(f32, f32, f32)>,
     pub waypoints: Vec<(f32, f32)>,
@@ -342,6 +349,8 @@ pub struct AutonomousPlan {
     pub post_path_actions: Vec<AutonomousMechanismAction>,
     /// Duration of waitMs(...) commands after the path and mechanism actions.
     pub post_path_wait_ms: u64,
+    /// Ordered path segments, each with its own following actions and delay.
+    pub path_segments: Vec<AutonomousPathSegment>,
     pub follow_path_called: bool,
     pub diagnostics: Vec<String>,
 }
@@ -447,37 +456,106 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         }
     }
 
-    // Resolve mechanism actions inside instant-command helper methods, then
-    // place them before or after the follow command in the sequential routine.
+    // Resolve path helper methods independently so each follow(...) in the
+    // sequential command retains its own geometry and position in the routine.
+    let mut named_paths: Vec<(String, Vec<(f32, f32)>, Vec<Option<f32>>)> = Vec::new();
+    for i in 0..tokens.len().saturating_sub(3) {
+        if !tokens[i].ident_is("Path") { continue; }
+        let Some(name) = tokens.get(i + 1).and_then(Token::ident) else { continue; };
+        if !tokens.get(i + 2).is_some_and(|t| t.punct("(")) { continue; }
+        let Some(params_end) = matching(&tokens, i + 2, "(", ")") else { continue; };
+        let Some(body_open) = (params_end + 1..tokens.len()).find(|&n| tokens[n].punct("{")) else { continue; };
+        let Some(body_end) = matching(&tokens, body_open, "{", "}") else { continue; };
+        let body = &tokens[body_open + 1..body_end];
+        let Some(linear_at) = (0..body.len().saturating_sub(1)).find(|&n|
+            body[n].ident_is("linear") && body[n + 1].punct("(")
+        ) else { continue; };
+        let Some(linear_end) = matching(body, linear_at + 1, "(", ")") else { continue; };
+        let args = split_arguments(&body[linear_at + 2..linear_end]);
+        let mut poses = Vec::new();
+        for arg in args {
+            let pose_name = tokens_to_text(arg);
+            if let Some((_, pose)) = named_poses.iter().find(|(n, _)| n == &pose_name) {
+                poses.push(*pose);
+            }
+        }
+        if poses.len() >= 2 {
+            let mut points = Vec::new();
+            let mut headings = Vec::new();
+            append_sampled_pose_path(&mut points, &mut headings, &poses, 24);
+            named_paths.push((name.to_owned(), points, headings));
+        }
+    }
+
+    // Interpret the sequential command in source order. Waits and mechanism
+    // commands are attached to the path that immediately precedes them.
     let method_actions = extract_instant_method_actions(source, &tokens);
     let sequential_args = find_sequential_arguments(&tokens);
+    let mut path_segments: Vec<AutonomousPathSegment> = Vec::new();
+    let mut startup_actions = Vec::new();
     let mut path_seen = false;
     for arg in sequential_args {
-        let arg_text = tokens_to_text(arg);
         if arg.first().is_some_and(|token| token.ident_is("waitMs")) {
-            if arg.get(1).is_some_and(|token| token.punct("(")) {
-                if let Some(end) = matching(arg, 1, "(", ")") {
-                    plan.post_path_wait_ms = resolve_number(source, &tokens_to_text(&arg[2..end]))
-                        .unwrap_or(0.0).max(0.0) as u64;
+            if let Some(segment) = path_segments.last_mut() {
+                if arg.get(1).is_some_and(|token| token.punct("(")) {
+                    if let Some(end) = matching(arg, 1, "(", ")") {
+                        segment.wait_after_ms = resolve_number(source, &tokens_to_text(&arg[2..end]))
+                            .unwrap_or(0.0).max(0.0) as u64;
+                    }
                 }
             }
             continue;
         }
-        if arg_text.contains("follow") {
+
+        let is_follow = arg.iter().any(|token| token.ident_is("follow"));
+        if is_follow {
             path_seen = true;
+            let path_name = arg.iter().enumerate().find_map(|(i, token)| {
+                if token.ident_is("follow") {
+                    arg[i + 1..].iter().find_map(|next| next.ident())
+                } else { None }
+            });
+            if let Some((_, points, headings)) = path_name.and_then(|name|
+                named_paths.iter().find(|(path, _, _)| path == name)
+            ) {
+                path_segments.push(AutonomousPathSegment {
+                    waypoints: points.clone(),
+                    headings: headings.clone(),
+                    wait_after_ms: 0,
+                    actions_after: Vec::new(),
+                });
+            }
             continue;
         }
+
         if let Some(open) = arg.iter().position(|token| token.punct("(")) {
             if open == 0 { continue; }
             let method_name = arg[open - 1].ident().unwrap_or("");
             if let Some(actions) = method_actions.iter().find(|(name, _)| name == method_name).map(|(_, actions)| actions) {
-                if path_seen {
-                    plan.post_path_actions.extend(actions.clone());
+                if let Some(segment) = path_segments.last_mut().filter(|_| path_seen) {
+                    segment.actions_after.extend(actions.clone());
                 } else {
-                    plan.startup_actions.extend(actions.clone());
+                    startup_actions.extend(actions.clone());
                 }
             }
         }
+    }
+
+    if !path_segments.is_empty() {
+        plan.path_found = true;
+        plan.waypoints.clear();
+        plan.waypoint_headings.clear();
+        for segment in &path_segments {
+            plan.waypoints.extend(segment.waypoints.iter().copied());
+            plan.waypoint_headings.extend(segment.headings.iter().copied());
+        }
+        plan.path_segments = path_segments;
+    }
+    plan.startup_actions = startup_actions;
+    plan.follow_path_called |= !plan.path_segments.is_empty();
+    if let Some(last) = plan.path_segments.last() {
+        plan.post_path_actions = last.actions_after.clone();
+        plan.post_path_wait_ms = last.wait_after_ms;
     }
 
     // Static-imported PedroCommands.follow(follower, path()) is the newer
