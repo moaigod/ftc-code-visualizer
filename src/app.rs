@@ -1361,6 +1361,30 @@ impl VisualizerApp {
             intake.to_vec(), Color32::from_rgb(240, 177, 54),
             Stroke::new(1.0_f32, Color32::WHITE),
         ));
+
+        // Collision hitboxes: the robot uses a rotated 18x18 in square.
+        let robot_hitbox = [
+            transform(-9.0, -9.0), transform(9.0, -9.0),
+            transform(9.0, 9.0), transform(-9.0, 9.0),
+        ];
+        painter.add(egui::Shape::closed_line(
+            robot_hitbox.to_vec(),
+            Stroke::new(2.0_f32, Color32::from_rgb(255, 75, 75)),
+        ));
+
+        // Intake capture hitbox. The intake checks a rounded rectangle from
+        // x=-8.5..8.5 and y=6.5..12.5, expanded by element radius + 1.5 in.
+        // Draw the largest supported element envelope (1.8 + 1.5 = 3.3 in).
+        let intake_hitbox = [
+            (-8.5, 3.2), (8.5, 3.2), (10.0, 3.7), (11.3, 5.0),
+            (11.8, 6.5), (11.8, 12.5), (11.3, 14.0), (10.0, 15.3),
+            (8.5, 15.8), (-8.5, 15.8), (-10.0, 15.3), (-11.3, 14.0),
+            (-11.8, 12.5), (-11.8, 6.5), (-11.3, 5.0), (-10.0, 3.7),
+        ].iter().map(|(x, y)| transform(*x, *y)).collect::<Vec<_>>();
+        painter.add(egui::Shape::closed_line(
+            intake_hitbox,
+            Stroke::new(2.0_f32, Color32::from_rgb(65, 220, 235)),
+        ));
         painter.text(rect.left_top() + Vec2::new(7.0, 7.0), Align2::LEFT_TOP,
             "BIOBUZZ FIELD", FontId::proportional(12.0), Color32::LIGHT_GRAY);
         painter.text(rect.right_bottom() - Vec2::new(7.0, 7.0), Align2::RIGHT_BOTTOM,
