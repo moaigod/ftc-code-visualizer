@@ -401,7 +401,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
                 }
             }
         } else {
-            plan.diagnostics.push(format!("Could not read control points for { }.", if is_line { "BezierLine" } else { "BezierCurve" }));
+            plan.diagnostics.push(format!("Could not read control points for {}.", if is_line { "BezierLine" } else { "BezierCurve" }));
         }
     }
 
