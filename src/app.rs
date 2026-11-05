@@ -173,7 +173,7 @@ impl VisualizerApp {
             return;
         }
         let plan = crate::ftc_interpreter::interpret_autonomous(&mode.source);
-        if plan.waypoints.is_empty() {
+        if plan.waypoints.is_empty() && !plan.path_found {
             self.autonomous_status = plan.diagnostics.join(" ");
             return;
         }
