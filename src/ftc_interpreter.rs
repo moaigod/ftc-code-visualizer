@@ -690,8 +690,10 @@ fn wait_until_condition(tokens: &[Token]) -> Option<String> {
         let end = matching(tokens, i + 1, "(", ")")?;
         let args = split_arguments(&tokens[i + 2..end]);
         let first = args.first()?;
-        let arrow = first.iter().position(|token| token.punct("->"))?;
-        let predicate = tokens_to_text(&first[arrow + 1..]);
+        // The lightweight Java tokenizer emits '-' and '>' as separate
+        // punctuation tokens, so recognize the lambda arrow as a pair.
+        let arrow = first.windows(2).position(|pair| pair[0].punct("-") && pair[1].punct(">"))?;
+        let predicate = tokens_to_text(&first[arrow + 2..]);
         if !predicate.trim().is_empty() { return Some(predicate); }
     }
     None
