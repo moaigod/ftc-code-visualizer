@@ -64,7 +64,7 @@ pub fn scan_project(project_root: &Path) -> Result<ProjectScan, String> {
         if let Some(mut info) = parse_op_mode(path.clone(), source) {
             for (config_path, config_source) in &hardware_config_sources {
                 if config_path != &path && !info.source.contains(config_source) {
-                    info.source.push_str("\n\\n// Imported ftcCV hardware declarations from ");
+                    info.source.push_str("\n\n// Imported ftcCV hardware declarations from ");
                     info.source.push_str(&config_path.display().to_string());
                     info.source.push_str("\n");
                     info.source.push_str(config_source);
