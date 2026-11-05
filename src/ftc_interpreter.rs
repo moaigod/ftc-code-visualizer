@@ -328,6 +328,8 @@ pub struct AutonomousMechanismAction {
     pub value: Option<f32>,
     /// Minimum flywheel speed required before this action can activate.
     pub minimum_flywheel_velocity: Option<f32>,
+    /// Original Java if-condition guarding this motor command, when present.
+    pub condition: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -684,12 +686,31 @@ fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(Strin
                 let role = classify_motor(variable, variable);
                 if matches!(role, MotorRole::Other | MotorRole::Drive(_)) { continue; }
                 let minimum_flywheel_velocity = minimum_flywheel_velocity_for_command(&body, lambda_open, lambda_end, command_at, source);
-                actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity });
+                let condition = condition_for_command(&body, lambda_open, lambda_end, command_at);
+                actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity, condition });
             }
         }
         if !actions.is_empty() { result.push((method.name.clone(), actions)); }
     }
     result
+}
+
+fn condition_for_command(
+    tokens: &[Token],
+    lambda_open: usize,
+    lambda_end: usize,
+    command_at: usize,
+) -> Option<String> {
+    for i in lambda_open + 1..command_at {
+        if !tokens[i].ident_is("if") || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) { continue; }
+        let condition_end = matching(tokens, i + 1, "(", ")")?;
+        let body_open = (condition_end + 1..lambda_end).find(|&n| tokens[n].punct("{"))?;
+        let body_end = matching(tokens, body_open, "{", "}")?;
+        if command_at > body_open && command_at < body_end {
+            return Some(tokens_to_text(&tokens[i + 2..condition_end]));
+        }
+    }
+    None
 }
 
 fn minimum_flywheel_velocity_for_command(
