@@ -816,26 +816,35 @@ impl VisualizerApp {
         }
 
         if key.contains(".getvelocity()") {
-            if key.contains("outtaker") || key.contains("shooter") {
-                return self.detected_shooter_command().map(|(kind, value)| format!("{kind}: {value}")).unwrap_or_else(|| "No shooter command found".to_owned());
+            // Both outtake motors are represented by the shared simulated flywheel.
+            // Match the variable name anywhere in the expression so Java casts such
+            // as ((DcMotorEx)OuttakeL).getVelocity() are supported.
+            if key.contains("outtake") || key.contains("shooter") || key.contains("flywheel") {
+                return format!("{:.1} ticks/s", self.flywheel_velocity);
             }
             let motor = key.split('.').next().unwrap_or("");
-            let index = if motor.contains("frontleft") { Some(0) }
-                else if motor.contains("frontright") { Some(1) }
-                else if motor.contains("backleft") { Some(2) }
-                else if motor.contains("backright") { Some(3) } else { None };
+            let index = if key.contains("frontleft") { Some(0) }
+                else if key.contains("frontright") { Some(1) }
+                else if key.contains("backleft") { Some(2) }
+                else if key.contains("backright") { Some(3) } else { None };
             if let Some(i) = index { return format!("{:.1} in/s", self.drive_wheel_velocity[i]); }
             return format!("{} (no matching simulated motor)", expression);
         }
         if key.contains(".getpower()") {
-            if key.contains("outtaker") || key.contains("shooter") {
-                return format!("{:.2}", self.detected_shooter_power().unwrap_or(0.0));
+            // Mechanism power is represented as the active command's power.
+            if key.contains("intake") {
+                return format!("{:.2}", if self.intake_running { 1.0 } else { 0.0 });
             }
-            let motor = key.split('.').next().unwrap_or("");
-            let index = if motor.contains("frontleft") { Some(0) }
-                else if motor.contains("frontright") { Some(1) }
-                else if motor.contains("backleft") { Some(2) }
-                else if motor.contains("backright") { Some(3) } else { None };
+            if key.contains("feeder") {
+                return format!("{:.2}", if self.feeder_running { 1.0 } else { 0.0 });
+            }
+            if key.contains("outtake") || key.contains("shooter") || key.contains("flywheel") {
+                return format!("{:.2}", if self.flywheel_target_velocity > 0.0 { 1.0 } else { 0.0 });
+            }
+            let index = if key.contains("frontleft") { Some(0) }
+                else if key.contains("frontright") { Some(1) }
+                else if key.contains("backleft") { Some(2) }
+                else if key.contains("backright") { Some(3) } else { None };
             if let Some(i) = index { return format!("{:.2}", self.drive_wheel_power[i]); }
         }
 
