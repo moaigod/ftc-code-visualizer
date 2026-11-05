@@ -174,7 +174,7 @@ impl VisualizerApp {
             self.autonomous_status = plan.diagnostics.join(" ");
             return;
         }
-        if !mode.source.contains("followPath") {
+        if !plan.follow_path_called {
             self.autonomous_status = plan.diagnostics.join(" ");
             return;
         }
@@ -960,6 +960,18 @@ impl VisualizerApp {
                 FontId::proportional(10.0),
                 color,
             );
+        }
+
+        // Draw the remaining autonomous route as a thin path overlay.
+        if self.autonomous_running {
+            let mut route_points = Vec::with_capacity(self.autonomous_waypoints.len() + 1);
+            route_points.push((self.robot_x, self.robot_y));
+            route_points.extend(self.autonomous_waypoints.iter().skip(self.autonomous_waypoint_index).copied());
+            for pair in route_points.windows(2) {
+                let a = Pos2::new(field.left() + pair[0].0 * scale, field.bottom() - pair[0].1 * scale);
+                let b = Pos2::new(field.left() + pair[1].0 * scale, field.bottom() - pair[1].1 * scale);
+                painter.line_segment([a, b], Stroke::new(1.6, Color32::from_rgb(90, 230, 150)));
+            }
         }
 
         // Scored elements remain at their original radius and landing position.
