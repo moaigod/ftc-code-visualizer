@@ -1536,11 +1536,11 @@ fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: Hiv
 }
 
 fn starting_field_pollen() -> Vec<Pollen> {
-    let mut pollen = Vec::with_capacity(24);
+    let mut pollen = Vec::with_capacity(30);
 
     // Each Flower has four overlapping pollen pieces. The progressively smaller
     // circles make the stack look like pollen being drawn into the intake.
-    let flower_radii = [1.4_f32, 1.05, 0.75];
+    let flower_radii = [1.4_f32, 1.05, 0.75, 0.5];
     let edge_offset = flower_radii[0];
     let flower_positions = [
         (96.5, edge_offset), // Bottom: move inward by the largest pollen radius
