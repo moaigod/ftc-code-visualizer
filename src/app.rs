@@ -543,7 +543,7 @@ impl VisualizerApp {
         let launch=heading+spread;
         // Outtake velocity sets the base launch speed. A steeper ramp
         // reduces the effective exit speed, then redirects it vertically.
-        let base_speed=(self.flywheel_velocity*0.0320).clamp(3.0,100.0);
+        let base_speed=(self.flywheel_velocity*0.0450).clamp(3.0,130.0);
         let angle=self.ramp_angle_deg.to_radians().clamp(0.0,1.40);
         let angle_fraction = (self.ramp_angle_deg / 80.0).clamp(0.0, 1.0);
         let speed = base_speed * (1.0 - 0.25 * angle_fraction);
