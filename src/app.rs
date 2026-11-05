@@ -54,6 +54,8 @@ struct PollenProjectile {
     y: f32,
     vx: f32,
     vy: f32,
+    vz: f32,
+    z: f32,
     elapsed: f32,
     kind: ElementKind,
     hive: Option<HiveSide>,
@@ -83,7 +85,7 @@ pub struct VisualizerApp {
     feeder_running: bool,
     flywheel_velocity: f32,
     flywheel_target_velocity: f32,
-    shooter_velocity_scale: f32,
+    ramp_angle_deg: f32,
     shot_cooldown: f32,
     intake_cycle_timer: f32,
     shot_sequence: u32,
@@ -136,7 +138,7 @@ impl Default for VisualizerApp {
             feeder_running: false,
             flywheel_velocity: 0.0,
             flywheel_target_velocity: 0.0,
-            shooter_velocity_scale: 0.0320,
+            ramp_angle_deg: 35.0,
             shot_cooldown: 0.0,
             intake_cycle_timer: 0.0,
             shot_sequence: 0,
@@ -498,8 +500,13 @@ impl VisualizerApp {
         let spread=SPREAD[self.shot_sequence as usize%SPREAD.len()].to_radians();
         self.shot_sequence=self.shot_sequence.wrapping_add(1);
         let launch=heading+spread;
-        let speed=(self.flywheel_velocity*self.shooter_velocity_scale).clamp(3.0,100.0);
-        self.pollen_projectile=Some(PollenProjectile{x:launch_x,y:launch_y,vx:launch.sin()*speed,vy:launch.cos()*speed,elapsed:0.0,kind,hive:cargo.hive,can_score_red,can_score_blue});
+        // Keep the flywheel-to-projectile speed model fixed; the adjustable
+        // ramp angle controls the vertical launch component and horizontal range.
+        let speed=(self.flywheel_velocity*0.0320).clamp(3.0,100.0);
+        let angle=self.ramp_angle_deg.to_radians().clamp(0.0,1.40);
+        let horizontal_speed=speed*angle.cos();
+        let vertical_speed=speed*angle.sin();
+        self.pollen_projectile=Some(PollenProjectile{x:launch_x,y:launch_y,vx:launch.sin()*horizontal_speed,vy:launch.cos()*horizontal_speed,vz:vertical_speed,z:0.0,elapsed:0.0,kind,hive:cargo.hive,can_score_red,can_score_blue});
         let loss=(0.30+(target/3000.0)*0.20).clamp(0.30,0.55);
         self.flywheel_velocity*=1.0-loss; self.shot_cooldown=0.28;
         let name=match kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
@@ -711,6 +718,8 @@ impl VisualizerApp {
             let previous_y = projectile.y;
             projectile.x += projectile.vx * dt;
             projectile.y += projectile.vy * dt;
+            projectile.z += projectile.vz * dt - 0.5 * 32.174 * dt * dt;
+            projectile.vz -= 32.174 * dt;
 
             // Calibrated tipping load: 8 pollen-equivalent units. Each Nectar is
             // weighted as 1.6 Pollen, so 3 starting Nectar + 4 Pollen tips;
@@ -803,7 +812,7 @@ impl VisualizerApp {
                 }
                 return;
             }
-            if projectile.elapsed >= SHOT_FLIGHT_SECONDS
+            if (projectile.elapsed > 0.0 && projectile.z <= 0.0)
                 || projectile.x < POLLEN_RADIUS_IN
                 || projectile.x > FIELD_SIZE_IN - POLLEN_RADIUS_IN
                 || projectile.y < POLLEN_RADIUS_IN
@@ -1227,8 +1236,7 @@ impl VisualizerApp {
         }
 
         if let Some(projectile) = self.pollen_projectile {
-            let flight = (projectile.elapsed / SHOT_FLIGHT_SECONDS).clamp(0.0, 1.0);
-            let arc_height = 18.0 * 4.0 * flight * (1.0 - flight);
+            let arc_height = projectile.z.max(0.0);
             let position = Pos2::new(
                 field.left() + projectile.x * scale,
                 field.bottom() - projectile.y * scale - arc_height * scale,
@@ -1668,7 +1676,7 @@ impl eframe::App for VisualizerApp {
             ui.label(format!("Pollen: {pc} · Nectar: {nc}"));
             ui.label(format!("Shoot order: {}",self.carried_elements.iter().map(|item|match item.kind{ElementKind::Pollen=>"P",ElementKind::Nectar=>"N"}).collect::<Vec<_>>().join(" → ")));
             ui.label(format!("Flywheel: {:.0}/{:.0} ticks/s", self.flywheel_velocity, self.flywheel_target_velocity));
-            ui.add(egui::Slider::new(&mut self.shooter_velocity_scale, 0.005..=0.06).text("Shooter calibration (in/s per tick/s)"));
+            ui.add(egui::Slider::new(&mut self.ramp_angle_deg, 0.0..=80.0).text("Ramp angle").suffix("°"));
             ui.label(format!("Intake: {} · Feeder: {}", if self.intake_running { "active" } else { "off" }, if self.feeder_running { "active" } else { "off" }));
             ui.label(&self.pollen_status);
             if let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) {
@@ -1684,7 +1692,7 @@ impl eframe::App for VisualizerApp {
             } else {
                 ui.label("Select an OpMode to detect outtake motors automatically.");
             }
-            ui.label("Outtake commands are read from the selected OpMode. Projectile speed still requires wheel/gearing calibration.");
+            ui.label("Ramp angle controls the projectile's launch arc and horizontal travel. Flywheel speed is converted using a fixed simulation scale.");
             ui.horizontal(|ui| {
                 if ui.button("Intake pollen [E]").clicked() {
                     self.intake_pollen();
