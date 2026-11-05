@@ -116,28 +116,31 @@ fn matching_delimiter(source: &str, start: usize, open: u8, close: u8) -> Option
 
 fn strip_comments(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
-    let bytes = source.as_bytes();
-    let mut i = 0;
-    let mut quote = 0_u8;
+    let mut chars = source.chars().peekable();
+    let mut quote = None;
     let mut escaped = false;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if quote != 0 {
-            out.push(b as char);
+    while let Some(c) = chars.next() {
+        if let Some(active_quote) = quote {
+            out.push(c);
             if escaped { escaped = false; }
-            else if b == b'\\' { escaped = true; }
-            else if b == quote { quote = 0; }
-            i += 1;
-        } else if b == b'"' || b == b'\\'' {
-            quote = b; out.push(b as char); i += 1;
-        } else if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
-            while i < bytes.len() && bytes[i] != b'\\n' { i += 1; }
-        } else if b == b'/' && bytes.get(i + 1) == Some(&b'*') {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') { i += 1; }
-            i = (i + 2).min(bytes.len());
+            else if c == '\\\\' { escaped = true; }
+            else if c == active_quote { quote = None; }
+        } else if c == '"' || c == '\\'' {
+            quote = Some(c);
+            out.push(c);
+        } else if c == '/' && chars.peek() == Some(&'/') {
+            while let Some(next) = chars.next() {
+                if next == '\\n' { out.push('\\n'); break; }
+            }
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            let mut previous = ' ';
+            while let Some(next) = chars.next() {
+                if previous == '*' && next == '/' { break; }
+                previous = next;
+            }
         } else {
-            out.push(b as char); i += 1;
+            out.push(c);
         }
     }
     out
@@ -294,7 +297,9 @@ fn lex_java(source: &str) -> Vec<JavaToken> {
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'.' || bytes[i] == b'_') { i += 1; }
             kind = JavaTokenKind::Number;
         } else {
-            i += 1;
+            i += if b.is_ascii() { 1 } else {
+                source[start..].chars().next().map(char::len_utf8).unwrap_or(1)
+            };
             if i < bytes.len() && matches!((b, bytes[i]), (b'=', b'=') | (b'!', b'=') | (b'<', b'=') | (b'>', b'=') | (b'&', b'&') | (b'|', b'|') | (b'+', b'+') | (b'-', b'-') | (b'-', b'>')) { i += 1; }
             kind = JavaTokenKind::Symbol;
         }
