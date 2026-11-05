@@ -321,12 +321,21 @@ fn strip_comments(source: &str) -> String {
 
 /// A sampled field-space route extracted from common PedroPathing path builders.
 /// This is a visualizer-side subset, not a general Java virtual machine.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AutonomousMechanismAction {
+    pub role: MotorRole,
+    pub method: String,
+    pub value: Option<f32>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AutonomousPlan {
     pub start_pose: Option<(f32, f32, f32)>,
     pub waypoints: Vec<(f32, f32)>,
     /// Optional PedroPathing heading in radians for each sampled waypoint.
     pub waypoint_headings: Vec<Option<f32>>,
+    pub startup_actions: Vec<AutonomousMechanismAction>,
+    pub post_path_actions: Vec<AutonomousMechanismAction>,
     pub follow_path_called: bool,
     pub diagnostics: Vec<String>,
 }
@@ -430,6 +439,30 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         }
     }
 
+    // Resolve mechanism actions inside instant-command helper methods, then
+    // place them before or after the follow command in the sequential routine.
+    let method_actions = extract_instant_method_actions(source, &tokens);
+    let sequential_args = find_sequential_arguments(&tokens);
+    let mut path_seen = false;
+    for arg in sequential_args {
+        let arg_text = tokens_to_text(arg);
+        if arg_text.contains("follow") {
+            path_seen = true;
+            continue;
+        }
+        if let Some(open) = arg.iter().position(|token| token.punct("(")) {
+            if open == 0 { continue; }
+            let method_name = arg[open - 1].ident().unwrap_or("");
+            if let Some(actions) = method_actions.iter().find(|(name, _)| name == method_name).map(|(_, actions)| actions) {
+                if path_seen {
+                    plan.post_path_actions.extend(actions.clone());
+                } else {
+                    plan.startup_actions.extend(actions.clone());
+                }
+            }
+        }
+    }
+
     // Static-imported PedroCommands.follow(follower, path()) is the newer
     // Ivy command form; schedule(...) starts it in OpMode.start().
     plan.follow_path_called |= tokens.iter().enumerate().any(|(i, token)|
@@ -449,6 +482,60 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         plan.diagnostics.push("No PedroPathing follow(...) or follower.followPath(...) command was detected; route extraction is preview-only.".to_owned());
     }
     plan
+}
+
+fn find_sequential_arguments<'a>(tokens: &'a [Token]) -> Vec<&'a [Token]> {
+    for i in 0..tokens.len().saturating_sub(1) {
+        if tokens[i].ident_is("sequential") && tokens[i + 1].punct("(") {
+            if let Some(end) = matching(tokens, i + 1, "(", ")") {
+                return split_arguments(&tokens[i + 2..end]);
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn extract_instant_method_actions(
+    source: &str,
+    tokens: &[Token],
+) -> Vec<(String, Vec<AutonomousMechanismAction>)> {
+    let mut methods = Vec::new();
+    for i in 0..tokens.len().saturating_sub(3) {
+        if !tokens[i].ident_is("Command") { continue; }
+        let Some(name) = tokens.get(i + 1).and_then(Token::ident) else { continue; };
+        if !tokens.get(i + 2).is_some_and(|token| token.punct("(")) { continue; }
+        let Some(params_end) = matching(tokens, i + 2, "(", ")") else { continue; };
+        let Some(body_open) = (params_end + 1..tokens.len()).find(|&n| tokens[n].punct("{")) else { continue; };
+        let Some(body_end) = matching(tokens, body_open, "{", "}") else { continue; };
+        let body = &tokens[body_open + 1..body_end];
+        let mut actions = Vec::new();
+        for p in 0..body.len().saturating_sub(4) {
+            if !body[p].ident_is("instant") || !body[p + 1].punct("(") { continue; }
+            let Some(instant_end) = matching(body, p + 1, "(", ")") else { continue; };
+            let Some(lambda_open) = (p + 2..instant_end).find(|&n| body[n].punct("{")) else { continue; };
+            let Some(lambda_end) = matching(body, lambda_open, "{", "}") else { continue; };
+            for command_at in lambda_open + 1..lambda_end {
+                let Some(variable) = body[command_at].ident() else { continue; };
+                if !body.get(command_at + 1).is_some_and(|token| token.punct(".")) { continue; }
+                let Some(method) = body.get(command_at + 2).and_then(Token::ident) else { continue; };
+                if method != "setPower" && method != "setVelocity" { continue; }
+                if !body.get(command_at + 3).is_some_and(|token| token.punct("(")) { continue; }
+                let Some(end) = matching(body, command_at + 3, "(", ")") else { continue; };
+                let expression = tokens_to_text(&body[command_at + 4..end]);
+                let role = classify_motor(variable, variable);
+                if matches!(role, MotorRole::Other | MotorRole::Drive(_)) { continue; }
+                actions.push(AutonomousMechanismAction {
+                    role,
+                    method: method.to_owned(),
+                    value: resolve_number(source, &expression),
+                });
+            }
+        }
+        if !actions.is_empty() {
+            methods.push((name.to_owned(), actions));
+        }
+    }
+    methods
 }
 
 fn append_sampled_path(waypoints: &mut Vec<(f32, f32)>, headings: &mut Vec<Option<f32>>, points: &[(f32, f32)], samples: usize) {
