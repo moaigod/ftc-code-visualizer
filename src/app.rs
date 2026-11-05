@@ -1,6 +1,7 @@
 use std::time::Instant;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, TextureHandle, Vec2};
 use gilrs::{Axis, Button, Gilrs};
+use rapier2d::prelude::*;
 use crate::importer::{self, OpModeInfo};
 
 const FIELD_SIZE_IN: f32 = 144.0;
@@ -66,7 +67,7 @@ struct PollenProjectile {
 pub struct VisualizerApp {
     robot_x: f32, robot_y: f32, heading_deg: f32, drive_speed: f32,
     is_running: bool, teleop_active: bool,
-    last_frame: Instant, elapsed_seconds: f32,
+    last_frame: Instant, physics_accumulator: f32, elapsed_seconds: f32,
     field_texture: Option<TextureHandle>, field_load_attempted: bool,
     project_name: Option<String>, op_modes: Vec<OpModeInfo>,
     selected_op_mode: Option<usize>, show_source: bool, import_status: String,
@@ -122,7 +123,7 @@ impl Default for VisualizerApp {
         Self {
             robot_x: 24.0, robot_y: 24.0, heading_deg: 0.0, drive_speed: MAX_SPEED_IN_S,
             is_running: false, teleop_active: false,
-            last_frame: Instant::now(), elapsed_seconds: 0.0,
+            last_frame: Instant::now(), physics_accumulator: 0.0, elapsed_seconds: 0.0,
             field_texture: None, field_load_attempted: false, project_name: None,
             op_modes: Vec::new(), selected_op_mode: None, show_source: false,
             import_status: "No FTC project loaded.".to_owned(),
@@ -232,6 +233,7 @@ impl VisualizerApp {
         self.autonomous_waiting_for_condition = false;
         self.autonomous_status = "Simulation reset to its initial state.".to_owned();
         self.last_frame = Instant::now();
+        self.physics_accumulator = 0.0;
     }
 
     fn run_autonomous(&mut self) {
@@ -567,97 +569,162 @@ impl VisualizerApp {
     }
 
     fn update_loose_pollen_physics(&mut self, dt: f32) {
-        // Loose pollen has light inertia, floor friction, wall collisions, and
-        // can be pushed by the robot instead of passing through its chassis.
-        let robot_speed = self.forward_velocity.hypot(self.strafe_velocity);
-        let heading = self.heading_deg.to_radians();
-        for pollen in &mut self.field_pollen {
-            // Scored elements remain inside their active scoring cell, but can
-            // drift, bounce off the hive walls, and collide with other scored pieces.
-            if pollen.scored {
-                pollen.x += pollen.vx * dt;
-                pollen.y += pollen.vy * dt;
-                let friction = (1.0 - 1.7 * dt).max(0.0);
-                pollen.vx *= friction;
-                pollen.vy *= friction;
-                let center = match pollen.hive {
-                    Some(HiveSide::Red) => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
-                    Some(HiveSide::Blue) => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
-                    None => (pollen.x, pollen.y),
-                };
-                let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
-                let min_x = min_x + pollen.radius;
-                let max_x = max_x - pollen.radius;
-                let min_y = min_y + pollen.radius;
-                let max_y = max_y - pollen.radius;
-                if pollen.x < min_x {
-                    pollen.x = min_x;
-                    pollen.vx = pollen.vx.abs() * 0.45;
-                } else if pollen.x > max_x {
-                    pollen.x = max_x;
-                    pollen.vx = -pollen.vx.abs() * 0.45;
-                }
-                if pollen.y < min_y {
-                    pollen.y = min_y;
-                    pollen.vy = pollen.vy.abs() * 0.45;
-                } else if pollen.y > max_y {
-                    pollen.y = max_y;
-                    pollen.vy = -pollen.vy.abs() * 0.45;
-                }
-                continue;
-            }
+        // Rapier uses inches as world units. The robot is an 18 x 18 in,
+        // approximately 18 kg rigid body; loose game pieces are light,
+        // round dynamic bodies. The field perimeter is represented by fixed walls.
+        let mut world = PhysicsWorld::new();
+        world.gravity = Vector::new(0.0, 0.0);
+        world.integration_parameters.dt = dt;
+        world.integration_parameters.num_solver_iterations = 8;
+        world.integration_parameters.max_ccd_substeps = 4;
 
-            // Pollen that belongs to a flower stays anchored in its stack.
-            if pollen.from_flower {
-                pollen.vx = 0.0;
-                pollen.vy = 0.0;
-                continue;
-            }
-
-            pollen.x += pollen.vx * dt;
-            pollen.y += pollen.vy * dt;
-            let friction = (1.0 - 2.8 * dt).max(0.0);
-            pollen.vx *= friction;
-            pollen.vy *= friction;
-
-            // Treat the robot as its actual rotated 18x18-inch square,
-            // rather than a 12.73-inch-radius circle that overstates its hitbox.
-            // Nectar staged inside an untipped hive is behind the hive's
-            // scoring-only barrier; the robot chassis must pass through it.
-            let inside_untipped_hive =
-                pollen.hive == Some(HiveSide::Red)
-                    && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0)
-                || pollen.hive == Some(HiveSide::Blue)
-                    && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0);
-            if inside_untipped_hive { continue; }
-
-            collide_element_with_robot(pollen, &mut self.robot_x, &mut self.robot_y, heading, robot_speed);
-
-            // Invisible hive perimeter walls affect scoring elements only.
-            // They keep the starting Nectar inside each untipped hive while
-            // still allowing the robot to drive across the same area.
-            let (red_untipped, red_tipped) = hive_pair_centers(HiveSide::Red, self.red_hive_tipped);
-            let (blue_untipped, blue_tipped) = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped);
-            collide_element_with_hive(pollen, red_untipped, HiveSide::Red, false);
-            collide_element_with_hive(pollen, red_tipped, HiveSide::Red, true);
-            collide_element_with_hive(pollen, blue_untipped, HiveSide::Blue, false);
-            collide_element_with_hive(pollen, blue_tipped, HiveSide::Blue, true);
+        let half_field = FIELD_SIZE_IN * 0.5;
+        let wall_thickness = 0.5;
+        for (x, y, half_x, half_y) in [
+            (wall_thickness, half_field, wall_thickness, half_field),
+            (FIELD_SIZE_IN - wall_thickness, half_field, wall_thickness, half_field),
+            (half_field, wall_thickness, half_field, wall_thickness),
+            (half_field, FIELD_SIZE_IN - wall_thickness, half_field, wall_thickness),
+        ] {
+            world.insert_collider(
+                ColliderBuilder::cuboid(half_x, half_y)
+                    .translation(Vector::new(x, y))
+                    .friction(0.95),
+                None,
+            );
         }
 
-        // Resolve overlaps between loose pollen pieces with a soft, damped bounce.
+        let heading = self.heading_deg.to_radians();
+        let world_vx = self.strafe_velocity * heading.cos()
+            + self.forward_velocity * heading.sin();
+        let world_vy = -self.strafe_velocity * heading.sin()
+            + self.forward_velocity * heading.cos();
+        let (robot_body, _) = world.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(Vector::new(self.robot_x, self.robot_y))
+                .rotation(-heading)
+                .linvel(Vector::new(world_vx, world_vy))
+                .angvel(-self.turn_velocity.to_radians())
+                .ccd_enabled(true),
+            ColliderBuilder::cuboid(9.0, 9.0)
+                .density(0.0556)
+                .friction(0.95)
+                .restitution(0.025),
+        );
+
+        let mut element_bodies = Vec::new();
+        for (index, element) in self.field_pollen.iter().enumerate() {
+            if element.from_flower || element.scored {
+                continue;
+            }
+            // Starting Nectar inside an untipped hive is intentionally staged:
+            // it is not a loose collision object until its cell tips.
+            let inside_untipped_hive =
+                (element.hive == Some(HiveSide::Red)
+                    && point_in_hive_cell((element.x, element.y), hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0))
+                || (element.hive == Some(HiveSide::Blue)
+                    && point_in_hive_cell((element.x, element.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0));
+            if inside_untipped_hive {
+                continue;
+            }
+
+            let (body, _) = world.insert(
+                RigidBodyBuilder::dynamic()
+                    .translation(Vector::new(element.x, element.y))
+                    .linvel(Vector::new(element.vx, element.vy))
+                    .ccd_enabled(true),
+                ColliderBuilder::ball(element.radius)
+                    .density(0.02)
+                    .friction(0.72)
+                    .restitution(0.16),
+            );
+            element_bodies.push((index, body));
+        }
+
+        world.step();
+
+        // Read the solved chassis pose and velocity back into the FTC simulator.
+        let robot = &world.bodies[robot_body];
+        self.robot_x = robot.translation().x;
+        self.robot_y = robot.translation().y;
+        self.heading_deg = (-robot.rotation().angle()).to_degrees().rem_euclid(360.0);
+        let velocity = robot.linvel();
+        let solved_heading = self.heading_deg.to_radians();
+        self.forward_velocity = velocity.x * solved_heading.sin()
+            + velocity.y * solved_heading.cos();
+        self.strafe_velocity = velocity.x * solved_heading.cos()
+            - velocity.y * solved_heading.sin();
+        self.turn_velocity = -robot.angvel().to_degrees();
+
+        // Rapier resolves robot-to-element and element-to-element contacts,
+        // including momentum transfer. Continuous collision detection prevents
+        // fast-moving pieces from passing through the chassis or field walls.
+        for (index, body_handle) in element_bodies {
+            let body = &world.bodies[body_handle];
+            if let Some(element) = self.field_pollen.get_mut(index) {
+                element.x = body.translation().x;
+                element.y = body.translation().y;
+                element.vx = body.linvel().x;
+                element.vy = body.linvel().y;
+            }
+        }
+
+        // Preserve the BioBuzz-specific hive behavior on top of the general
+        // rigid-body simulation: scored pieces stay inside their active cell,
+        // while unscored pieces bounce off the scoring-cell perimeter.
+        for element in &mut self.field_pollen {
+            if element.from_flower {
+                continue;
+            }
+            if element.scored {
+                element.x += element.vx * dt;
+                element.y += element.vy * dt;
+                let friction = (1.0 - 1.7 * dt).max(0.0);
+                element.vx *= friction;
+                element.vy *= friction;
+                let center = match element.hive {
+                    Some(HiveSide::Red) => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
+                    Some(HiveSide::Blue) => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
+                    None => continue,
+                };
+                let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
+                let min_x = min_x + element.radius;
+                let max_x = max_x - element.radius;
+                let min_y = min_y + element.radius;
+                let max_y = max_y - element.radius;
+                if element.x < min_x { element.x = min_x; element.vx = element.vx.abs() * 0.45; }
+                if element.x > max_x { element.x = max_x; element.vx = -element.vx.abs() * 0.45; }
+                if element.y < min_y { element.y = min_y; element.vy = element.vy.abs() * 0.45; }
+                if element.y > max_y { element.y = max_y; element.vy = -element.vy.abs() * 0.45; }
+                continue;
+            }
+
+            let (red_untipped, red_tipped) = hive_pair_centers(HiveSide::Red, self.red_hive_tipped);
+            let (blue_untipped, blue_tipped) = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped);
+            collide_element_with_hive(element, red_untipped, HiveSide::Red, false);
+            collide_element_with_hive(element, red_tipped, HiveSide::Red, true);
+            collide_element_with_hive(element, blue_untipped, HiveSide::Blue, false);
+            collide_element_with_hive(element, blue_tipped, HiveSide::Blue, true);
+
+            // A final numerical guard keeps all loose objects within the legal field.
+            let min_x = element.radius.max(0.0);
+            let max_x = FIELD_SIZE_IN - element.radius.max(0.0);
+            let min_y = element.radius.max(0.0);
+            let max_y = FIELD_SIZE_IN - element.radius.max(0.0);
+            if element.x < min_x { element.x = min_x; element.vx = element.vx.abs() * 0.45; }
+            if element.x > max_x { element.x = max_x; element.vx = -element.vx.abs() * 0.45; }
+            if element.y < min_y { element.y = min_y; element.vy = element.vy.abs() * 0.45; }
+            if element.y > max_y { element.y = max_y; element.vy = -element.vy.abs() * 0.45; }
+        }
+
+        // Scored elements still collide with one another inside their hive.
         for i in 0..self.field_pollen.len() {
             for j in (i + 1)..self.field_pollen.len() {
                 let (left, right) = self.field_pollen.split_at_mut(j);
                 let a = &mut left[i];
                 let b = &mut right[0];
-                // Flower-stack pollen is fixed. Scored pieces collide with
-                // other scored pieces in the same hive, but not with loose field pieces.
-                if a.from_flower || b.from_flower {
+                if !a.scored || !b.scored || a.hive.is_none() || a.hive != b.hive {
                     continue;
-                }
-                if a.scored || b.scored {
-                    let same_scored_hive = a.scored && b.scored && a.hive.is_some() && a.hive == b.hive;
-                    if !same_scored_hive { continue; }
                 }
                 let dx = b.x - a.x;
                 let dy = b.y - a.y;
@@ -667,63 +734,33 @@ impl VisualizerApp {
                     let nx = dx / distance;
                     let ny = dy / distance;
                     let overlap = (minimum - distance) * 0.5;
-                    a.x -= nx * overlap; a.y -= ny * overlap;
-                    b.x += nx * overlap; b.y += ny * overlap;
+                    a.x -= nx * overlap;
+                    a.y -= ny * overlap;
+                    b.x += nx * overlap;
+                    b.y += ny * overlap;
                     let relative = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
                     if relative > 0.0 {
-                        a.vx -= nx * relative * 0.55; a.vy -= ny * relative * 0.55;
-                        b.vx += nx * relative * 0.55; b.vy += ny * relative * 0.55;
+                        a.vx -= nx * relative * 0.55;
+                        a.vy -= ny * relative * 0.55;
+                        b.vx += nx * relative * 0.55;
+                        b.vy += ny * relative * 0.55;
                     }
                 }
             }
         }
 
-        // Re-confine scored elements after pairwise collision resolution so
-        // even a crowded hive cannot push them outside its scoring rectangle.
-        for pollen in &mut self.field_pollen {
-            if !pollen.scored { continue; }
-            let center = match pollen.hive {
+        // Clamp scored pieces after pairwise separation so crowded hives cannot
+        // push them through the scoring-zone boundary.
+        for element in &mut self.field_pollen {
+            if !element.scored { continue; }
+            let center = match element.hive {
                 Some(HiveSide::Red) => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
                 Some(HiveSide::Blue) => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
                 None => continue,
             };
             let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
-            pollen.x = pollen.x.clamp(min_x + pollen.radius, max_x - pollen.radius);
-            pollen.y = pollen.y.clamp(min_y + pollen.radius, max_y - pollen.radius);
-        }
-
-        // Keep every loose scoring element inside the field, then resolve
-        // robot contact again. Boundary correction can otherwise push an
-        // element back through the chassis when it is trapped against a wall.
-        for pollen in &mut self.field_pollen {
-            if pollen.scored { continue; }
-            let min = pollen.radius;
-            let max = FIELD_SIZE_IN - pollen.radius;
-            if pollen.x < min {
-                pollen.x = min;
-                pollen.vx = pollen.vx.abs() * 0.35;
-            } else if pollen.x > max {
-                pollen.x = max;
-                pollen.vx = -pollen.vx.abs() * 0.35;
-            }
-            if pollen.y < min {
-                pollen.y = min;
-                pollen.vy = pollen.vy.abs() * 0.35;
-            } else if pollen.y > max {
-                pollen.y = max;
-                pollen.vy = -pollen.vy.abs() * 0.35;
-            }
-
-            if !pollen.from_flower {
-                let inside_untipped_hive =
-                    (pollen.hive == Some(HiveSide::Red)
-                        && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0))
-                    || (pollen.hive == Some(HiveSide::Blue)
-                        && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0));
-                if !inside_untipped_hive {
-                    collide_element_with_robot(pollen, &mut self.robot_x, &mut self.robot_y, self.heading_deg.to_radians(), robot_speed);
-                }
-            }
+            element.x = element.x.clamp(min_x + element.radius, max_x - element.radius);
+            element.y = element.y.clamp(min_y + element.radius, max_y - element.radius);
         }
     }
 
@@ -999,9 +1036,20 @@ impl VisualizerApp {
     }
 
     fn update_simulation(&mut self, ctx: &egui::Context) {
+        // Physics and FTC mechanism updates run at a fixed 120 Hz regardless
+        // of the render frame rate. A bounded accumulator avoids a spiral of death.
+        const FIXED_DT: f32 = 1.0 / 120.0;
         let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f32().min(0.05);
+        let frame_dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.10);
         self.last_frame = now;
+        self.physics_accumulator = (self.physics_accumulator + frame_dt).min(0.25);
+        while self.physics_accumulator >= FIXED_DT {
+            self.update_simulation_step(ctx, FIXED_DT);
+            self.physics_accumulator -= FIXED_DT;
+        }
+    }
+
+    fn update_simulation_step(&mut self, ctx: &egui::Context, dt: f32) {
         self.flower_intake_cooldown = (self.flower_intake_cooldown - dt).max(0.0);
         self.intake_cycle_timer = (self.intake_cycle_timer - dt).max(0.0);
         if self.intake_running && self.intake_cycle_timer <= 0.0 {
@@ -1017,7 +1065,6 @@ impl VisualizerApp {
             self.shoot_pollen();
         }
         self.update_pollen(dt);
-        self.update_loose_pollen_physics(dt);
         if !self.pollen_projectiles.is_empty() || self.flower_intake_cooldown > 0.0 || self.intake_running || self.flywheel_velocity != self.flywheel_target_velocity || self.shot_cooldown > 0.0 {
             ctx.request_repaint();
         }
@@ -1042,11 +1089,11 @@ impl VisualizerApp {
                 let distance = dx.hypot(dy);
                 // Ramp speed gradually so the robot does not jump to full
                 // speed on the first simulation frame.
-                self.forward_velocity = (self.forward_velocity + 85.0 * dt).min(34.0);
-                let step = (self.forward_velocity * dt).min(distance);
+                // Accelerate toward the path target, then let Rapier resolve
+                // chassis contact, field boundaries, and momentum transfer.
+                let braking_speed = (2.0 * 85.0 * distance.max(0.0)).sqrt();
+                let target_speed = (self.forward_velocity + 85.0 * dt).min(34.0).min(braking_speed);
                 if distance > 0.001 {
-                    self.robot_x += dx / distance * step;
-                    self.robot_y += dy / distance * step;
                     let desired_heading = self.autonomous_headings
                         .get(self.autonomous_waypoint_index)
                         .and_then(|heading| *heading)
@@ -1054,11 +1101,18 @@ impl VisualizerApp {
                         .unwrap_or_else(|| dx.atan2(dy).to_degrees().rem_euclid(360.0));
                     let heading_delta = (desired_heading - self.heading_deg + 540.0).rem_euclid(360.0) - 180.0;
                     self.heading_deg = (self.heading_deg + heading_delta * (1.0 - (-14.0 * dt).exp())).rem_euclid(360.0);
+                    let radians = self.heading_deg.to_radians();
+                    let world_vx = dx / distance * target_speed;
+                    let world_vy = dy / distance * target_speed;
+                    self.forward_velocity = world_vx * radians.sin() + world_vy * radians.cos();
+                    self.strafe_velocity = world_vx * radians.cos() - world_vy * radians.sin();
+                    self.turn_velocity = 0.0;
                 }
-                self.resolve_robot_wall_collisions();
-                self.elapsed_seconds += dt;
                 ctx.request_repaint();
             } else {
+                self.forward_velocity = 0.0;
+                self.strafe_velocity = 0.0;
+                self.turn_velocity = 0.0;
                 if let Some(segment) = self.autonomous_segments.get(self.autonomous_segment_index).cloned() {
                     if !self.autonomous_post_actions_applied {
                         // Execute post-path mechanism commands in source order.
@@ -1198,28 +1252,18 @@ impl VisualizerApp {
             self.strafe_velocity = approach(self.strafe_velocity, target_strafe * MAX_SPEED_IN_S, 72.0 * dt);
             self.turn_velocity = approach(self.turn_velocity, target_turn * MAX_TURN_DEG_S, 540.0 * dt);
 
-            let heading = self.heading_deg.to_radians();
-            let field_dx = self.strafe_velocity * heading.cos() + self.forward_velocity * heading.sin();
-            let field_dy = -self.strafe_velocity * heading.sin() + self.forward_velocity * heading.cos();
-            self.robot_x = (self.robot_x + field_dx * dt)
-                .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
-            self.robot_y = (self.robot_y + field_dy * dt)
-                .clamp(9.0, FIELD_SIZE_IN - 9.0);
-            self.resolve_robot_wall_collisions();
-            self.heading_deg = (self.heading_deg + self.turn_velocity * dt).rem_euclid(360.0);
-            self.resolve_robot_wall_collisions();
+            // Rapier integrates the chassis pose and resolves contact impulses.
             self.elapsed_seconds += dt;
             ctx.request_repaint();
         } else if self.is_running {
-            let h = self.heading_deg.to_radians();
-            self.robot_x = (self.robot_x + h.sin() * self.drive_speed * dt)
-                .clamp(ROBOT_SIZE_IN / 2.0, FIELD_SIZE_IN - ROBOT_SIZE_IN / 2.0);
-            self.robot_y = (self.robot_y + h.cos() * self.drive_speed * dt)
-                .clamp(9.0, FIELD_SIZE_IN - 9.0);
-            self.resolve_robot_wall_collisions();
+            self.forward_velocity = self.drive_speed;
+            self.strafe_velocity = 0.0;
+            self.turn_velocity = 0.0;
             self.elapsed_seconds += dt;
             ctx.request_repaint();
         }
+
+        self.update_loose_pollen_physics(dt);
     }
 
     fn draw_field(&self, ui: &mut egui::Ui) {
