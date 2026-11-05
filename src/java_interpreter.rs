@@ -194,6 +194,8 @@ pub enum JavaStatement {
     For { initializer: Option<String>, condition: Option<String>, update: Option<String>, body: Box<JavaStatement> },
     While { condition: String, body: Box<JavaStatement> },
     Return(Option<String>),
+    VariableDeclaration { type_name: String, name: String, initializer: Option<String> },
+    Assignment { target: String, value: String },
     Expression(String),
     Empty,
     Unsupported(String),
@@ -432,6 +434,19 @@ fn parse_java_statement(tokens: &[JavaToken], start: usize, limit: usize, source
     let statement = if is_return {
         let value = text.strip_prefix("return").map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned);
         JavaStatement::Return(value)
+    } else if let Some((left, value)) = text.split_once('=') {
+        let target = left.trim();
+        let name = target.split_whitespace().last().unwrap_or("");
+        let prefix = target.strip_suffix(name).unwrap_or("").trim();
+        if !prefix.is_empty() && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+            JavaStatement::VariableDeclaration {
+                type_name: prefix.to_owned(),
+                name: name.to_owned(),
+                initializer: Some(value.trim().to_owned()),
+            }
+        } else {
+            JavaStatement::Assignment { target: target.to_owned(), value: value.trim().to_owned() }
+        }
     } else {
         JavaStatement::Expression(text)
     };
@@ -488,6 +503,21 @@ mod java_ast_tests {
         assert!(matches!(&method.body, JavaStatement::Block(statements)
             if matches!(statements.first(), Some(JavaStatement::For { .. }))
             && matches!(statements.get(1), Some(JavaStatement::While { .. }))));
+    }
+
+    #[test]
+    fn parses_local_declarations_and_assignments() {
+        let source = r#"
+            private void setup() {
+                double speed = 1125;
+                speed = speed + 10;
+            }
+        "#;
+        let program = parse_java_program(source);
+        let method = program.methods.iter().find(|m| m.name == "setup").unwrap();
+        assert!(matches!(&method.body, JavaStatement::Block(statements)
+            if matches!(statements.first(), Some(JavaStatement::VariableDeclaration { name, .. }) if name == "speed")
+            && matches!(statements.get(1), Some(JavaStatement::Assignment { target, .. }) if target == "speed")));
     }
 
 }
