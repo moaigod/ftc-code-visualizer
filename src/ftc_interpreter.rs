@@ -516,12 +516,22 @@ fn extract_instant_method_actions(
             let Some(lambda_end) = matching(body, lambda_open, "{", "}") else { continue; };
             for command_at in lambda_open + 1..lambda_end {
                 let Some(variable) = body[command_at].ident() else { continue; };
-                if !body.get(command_at + 1).is_some_and(|token| token.punct(".")) { continue; }
-                let Some(method) = body.get(command_at + 2).and_then(Token::ident) else { continue; };
+                // A casted motor receiver is tokenized as
+                // ((DcMotorEx)OuttakeL).setVelocity(...), so skip the
+                // closing parenthesis between the variable and member access.
+                let mut member_at = command_at + 1;
+                while member_at < lambda_end
+                    && member_at <= command_at + 3
+                    && body[member_at].punct(")")
+                {
+                    member_at += 1;
+                }
+                if !body.get(member_at).is_some_and(|token| token.punct(".")) { continue; }
+                let Some(method) = body.get(member_at + 1).and_then(Token::ident) else { continue; };
                 if method != "setPower" && method != "setVelocity" { continue; }
-                if !body.get(command_at + 3).is_some_and(|token| token.punct("(")) { continue; }
-                let Some(end) = matching(body, command_at + 3, "(", ")") else { continue; };
-                let expression = tokens_to_text(&body[command_at + 4..end]);
+                if !body.get(member_at + 2).is_some_and(|token| token.punct("(")) { continue; }
+                let Some(end) = matching(body, member_at + 2, "(", ")") else { continue; };
+                let expression = tokens_to_text(&body[member_at + 3..end]);
                 let role = classify_motor(variable, variable);
                 if matches!(role, MotorRole::Other | MotorRole::Drive(_)) { continue; }
                 actions.push(AutonomousMechanismAction {
