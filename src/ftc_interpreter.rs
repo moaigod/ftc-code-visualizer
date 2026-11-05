@@ -332,6 +332,8 @@ pub struct AutonomousMechanismAction {
     pub condition: Option<String>,
     /// Java waitUntil predicate that must become true before this action runs.
     pub wait_until: Option<String>,
+    /// Delay to wait after the previous action before this action executes.
+    pub delay_before_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -494,6 +496,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     let mut path_segments: Vec<AutonomousPathSegment> = Vec::new();
     let mut startup_actions = Vec::new();
     let mut path_seen = false;
+    let mut pending_action_delay_ms = 0_u64;
 
     fn apply_command_node(
         node: &crate::java_interpreter::CommandNode,
@@ -503,6 +506,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         path_segments: &mut Vec<AutonomousPathSegment>,
         startup_actions: &mut Vec<AutonomousMechanismAction>,
         path_seen: &mut bool,
+        pending_action_delay_ms: &mut u64,
         parallel_group: bool,
     ) {
         use crate::java_interpreter::CommandNode;
@@ -543,7 +547,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
                             }
                         } else {
                             apply_command_node(child, source, named_paths, method_actions,
-                                path_segments, startup_actions, path_seen, true);
+                                path_segments, startup_actions, path_seen, pending_action_delay_ms, true);
                         }
                     }
                     if let Some(segment) = path_segments.last_mut().filter(|_| *path_seen) {
@@ -552,12 +556,15 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
                 } else {
                     for child in children {
                         apply_command_node(child, source, named_paths, method_actions,
-                            path_segments, startup_actions, path_seen, parallel_group);
+                            path_segments, startup_actions, path_seen, pending_action_delay_ms, parallel_group);
                     }
                 }
             }
             CommandNode::Call { name, args } if name == "follow" => {
                 *path_seen = true;
+                // A pending wait immediately before a path belongs to the
+                // preceding path, not to the next path's mechanism actions.
+                *pending_action_delay_ms = 0;
                 let path_name = args.get(1).and_then(|arg| {
                     let trimmed = arg.trim();
                     let open = trimmed.find('(')?;
@@ -576,13 +583,16 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
             }
             CommandNode::Call { name, args } if name == "waitMs" => {
                 if let Some(ms) = args.first().and_then(|v| resolve_number(source, v)) {
+                    let delay = ms.max(0.0) as u64;
                     if let Some(segment) = path_segments.last_mut() {
-                        segment.wait_after_ms = segment.wait_after_ms.saturating_add(ms.max(0.0) as u64);
+                        segment.wait_after_ms = segment.wait_after_ms.saturating_add(delay);
+                        *pending_action_delay_ms = pending_action_delay_ms.saturating_add(delay);
                     }
                 }
             }
             CommandNode::Call { name, .. } => {
-                attach_command_action(name, method_actions, path_segments, startup_actions, *path_seen);
+                attach_command_action(name, method_actions, path_segments, startup_actions,
+                    *path_seen, pending_action_delay_ms);
             }
             CommandNode::Raw(_) => {}
         }
@@ -594,10 +604,18 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         path_segments: &mut Vec<AutonomousPathSegment>,
         startup_actions: &mut Vec<AutonomousMechanismAction>,
         path_seen: bool,
+        pending_action_delay_ms: &mut u64,
     ) {
         if let Some(actions) = method_actions.iter().find(|(method, _)| method == name).map(|(_, actions)| actions) {
             if let Some(segment) = path_segments.last_mut().filter(|_| path_seen) {
-                segment.actions_after.extend(actions.clone());
+                let delay = *pending_action_delay_ms;
+                segment.wait_after_ms = segment.wait_after_ms.saturating_sub(delay);
+                let mut actions = actions.clone();
+                if let Some(first) = actions.first_mut() {
+                    first.delay_before_ms = first.delay_before_ms.saturating_add(delay);
+                }
+                segment.actions_after.extend(actions);
+                *pending_action_delay_ms = 0;
             } else {
                 startup_actions.extend(actions.clone());
             }
@@ -606,7 +624,8 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
 
     if let Some(tree) = command_tree {
         apply_command_node(&tree, source, &named_paths, &method_actions,
-            &mut path_segments, &mut startup_actions, &mut path_seen, false);
+            &mut path_segments, &mut startup_actions, &mut path_seen,
+            &mut pending_action_delay_ms, false);
     }
     if !path_segments.is_empty() {
         plan.path_found = true;
@@ -686,7 +705,7 @@ fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(Strin
                 let minimum_flywheel_velocity = minimum_flywheel_velocity_for_command(&body, lambda_open, lambda_end, command_at, source);
                 let condition = condition_for_command(&body, lambda_open, lambda_end, command_at);
                 let wait_until = wait_until_condition(&body);
-                actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity, condition, wait_until });
+                actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity, condition, wait_until, delay_before_ms: 0 });
             }
         }
         if !actions.is_empty() { result.push((method.name.clone(), actions)); }
