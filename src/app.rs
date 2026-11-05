@@ -918,8 +918,20 @@ impl VisualizerApp {
                         // once when invoked. A failed condition is not retried
                         // while a parallel wait is running.
                         for action in &segment.actions_after {
-                            let condition_passes = action.minimum_flywheel_velocity
-                                .is_none_or(|minimum| self.flywheel_velocity >= minimum);
+                            let current_velocity = self.flywheel_velocity;
+                            let condition_passes = action.condition.as_deref()
+                                .and_then(|condition| crate::java_interpreter::evaluate_boolean(condition, &|operand| {
+                                    let key = operand.to_ascii_lowercase();
+                                    if key.contains("getvelocity")
+                                        && (key.contains("outtake") || key.contains("shooter") || key.contains("flywheel"))
+                                    {
+                                        Some(current_velocity)
+                                    } else {
+                                        operand.trim().parse::<f32>().ok()
+                                    }
+                                }))
+                                .unwrap_or_else(|| action.minimum_flywheel_velocity
+                                    .is_none_or(|minimum| current_velocity >= minimum));
                             if !condition_passes { continue; }
                             let value = action.value.unwrap_or(0.0);
                             match action.role {
