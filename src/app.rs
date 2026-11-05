@@ -191,6 +191,20 @@ impl VisualizerApp {
         }
         self.autonomous_waypoints = plan.waypoints;
         self.autonomous_headings = plan.waypoint_headings;
+        self.intake_running = false;
+        self.feeder_running = false;
+        self.flywheel_target_velocity = 0.0;
+        for action in &plan.startup_actions {
+            let value = action.value.unwrap_or(0.0);
+            match action.role {
+                crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
+                crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => self.feeder_running = value > 0.0,
+                crate::ftc_interpreter::MotorRole::Outtake if action.method == "setVelocity" => {
+                    self.flywheel_target_velocity = self.flywheel_target_velocity.max(value.max(0.0));
+                }
+                _ => {}
+            }
+        }
         self.autonomous_waypoint_index = 0;
         self.autonomous_running = true;
         self.is_running = false;
@@ -822,7 +836,7 @@ impl VisualizerApp {
         let flywheel_rate = if self.flywheel_target_velocity > self.flywheel_velocity { 1800.0 } else { 900.0 };
         self.flywheel_velocity = approach(self.flywheel_velocity, self.flywheel_target_velocity, flywheel_rate * dt);
         self.shot_cooldown = (self.shot_cooldown - dt).max(0.0);
-        if self.teleop_active && self.feeder_running && self.shot_cooldown <= 0.0 {
+        if self.feeder_running && self.shot_cooldown <= 0.0 {
             self.shoot_pollen();
         }
         self.update_pollen(dt);
@@ -868,10 +882,31 @@ impl VisualizerApp {
                 self.elapsed_seconds += dt;
                 ctx.request_repaint();
             } else {
+                let Some(mode) = self.selected_op_mode.and_then(|i| self.op_modes.get(i)) else {
+                    self.autonomous_running = false;
+                    return;
+                };
+                let plan = crate::ftc_interpreter::interpret_autonomous(&mode.source);
+                for action in &plan.post_path_actions {
+                    let value = action.value.unwrap_or(0.0);
+                    match action.role {
+                        crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
+                        crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => self.feeder_running = value > 0.0,
+                        crate::ftc_interpreter::MotorRole::Outtake if action.method == "setVelocity" => {
+                            self.flywheel_target_velocity = self.flywheel_target_velocity.max(value.max(0.0));
+                        }
+                        _ => {}
+                    }
+                }
                 self.autonomous_running = false;
                 self.forward_velocity = 0.0;
                 self.strafe_velocity = 0.0;
-                self.autonomous_status = "Autonomous path complete.".to_owned();
+                self.autonomous_status = if plan.post_path_actions.is_empty() {
+                    "Autonomous path complete. No post-path mechanism actions were recognized.".to_owned()
+                } else {
+                    "Autonomous path complete. Post-path mechanism commands activated.".to_owned()
+                };
+                ctx.request_repaint();
             }
         } else if self.teleop_active {
             self.poll_controller();
