@@ -792,11 +792,10 @@ impl VisualizerApp {
         // Draw the legal launch areas. Each 120-degree cone points from its
         // active scoring cell toward the center of the field and expands to
         // the field walls.
-        for (side_and_center in [
+        for (side, cone_center, color) in [
             (HiveSide::Red, hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0, Color32::from_rgb(235, 65, 75)),
             (HiveSide::Blue, hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0, Color32::from_rgb(65, 145, 255)),
-        ]) {
-            let (side, cone_center, color) = side_and_center;
+        ] {
             let world_points = scoring_cone_polygon(cone_center, side);
             let screen_points = world_points.into_iter().map(|(x, y)| {
                 Pos2::new(field.left() + x * scale, field.bottom() - y * scale)
