@@ -400,11 +400,36 @@ impl VisualizerApp {
         find_gamepad_actions(&mode.source)
     }
 
+    fn detected_motor_power_for_button(
+        &self,
+        button: &str,
+        role: crate::ftc_interpreter::MotorRole,
+    ) -> Option<f32> {
+        let source = self.selected_op_mode
+            .and_then(|i| self.op_modes.get(i))
+            .map(|mode| mode.source.as_str())?;
+        let program = crate::ftc_interpreter::interpret(source);
+        program.commands.iter()
+            .filter(|command| {
+                command.button.as_deref() == Some(button)
+                    && command.method == "setPower"
+                    && program.motors.iter().any(|motor| {
+                        motor.variable == command.motor && motor.role == role
+                    })
+            })
+            .filter_map(|command| command.value)
+            .last()
+            .map(|value| value.abs().clamp(0.0, 1.0))
+    }
+
     fn run_gamepad_action(&mut self, button: &str, action: &str) {
         let normalized = action.to_ascii_lowercase();
         if normalized.contains("intake") {
-            self.intake_running = true;
-            self.intake_power = 1.0;
+            self.intake_power = self.detected_motor_power_for_button(
+                button,
+                crate::ftc_interpreter::MotorRole::Intake,
+            ).unwrap_or(1.0);
+            self.intake_running = self.intake_power > 0.0;
         } else if normalized.contains("feeder") {
             self.feeder_running = true;
             self.feeder_power = 1.0;
@@ -1614,9 +1639,19 @@ impl eframe::App for VisualizerApp {
         // these values; overwriting them with an empty controller state here
         // would immediately cancel every autonomous setPower() action.
         if self.teleop_active {
-            self.intake_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("intake")));
-            self.feeder_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("feeder")));
-            self.intake_power = if self.intake_running { 1.0 } else { 0.0 };
+            let active_intake_button = pressed_buttons.iter().find(|button| {
+                actions.iter().any(|(mapped, action)| mapped == *button && action.contains("intake"))
+            }).cloned();
+            self.intake_running = active_intake_button.is_some();
+            self.intake_power = active_intake_button.as_deref()
+                .and_then(|button| self.detected_motor_power_for_button(
+                    button,
+                    crate::ftc_interpreter::MotorRole::Intake,
+                ))
+                .unwrap_or(if self.intake_running { 1.0 } else { 0.0 });
+            self.feeder_running = pressed_buttons.iter().any(|button| {
+                actions.iter().any(|(mapped, action)| mapped == button && action.contains("feeder"))
+            });
             self.feeder_power = if self.feeder_running { 1.0 } else { 0.0 };
         }
         let newly_pressed = pressed_buttons.iter()
