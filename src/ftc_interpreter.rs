@@ -330,7 +330,6 @@ pub struct AutonomousMechanismAction {
     pub minimum_flywheel_velocity: Option<f32>,
 }
 
-#[derive(Clone, Debug, Default)]
 #[derive(Clone, Debug)]
 pub struct AutonomousPathSegment {
     pub waypoints: Vec<(f32, f32)>,
@@ -339,6 +338,7 @@ pub struct AutonomousPathSegment {
     pub actions_after: Vec<AutonomousMechanismAction>,
 }
 
+#[derive(Default)]
 pub struct AutonomousPlan {
     pub start_pose: Option<(f32, f32, f32)>,
     pub waypoints: Vec<(f32, f32)>,
