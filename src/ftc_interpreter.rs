@@ -325,6 +325,7 @@ fn strip_comments(source: &str) -> String {
 pub struct AutonomousPlan {
     pub start_pose: Option<(f32, f32, f32)>,
     pub waypoints: Vec<(f32, f32)>,
+    pub follow_path_called: bool,
     pub diagnostics: Vec<String>,
 }
 
@@ -333,6 +334,9 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     let clean = strip_comments(source);
     let tokens = tokenize(&clean);
     let mut plan = AutonomousPlan::default();
+    plan.follow_path_called = tokens.windows(2).any(|pair|
+        pair[0].ident_is("followPath") && pair[1].punct("(")
+    );
 
     // PedroPathing Pose(x, y, heading) uses radians for heading.
     for i in 0..tokens.len().saturating_sub(2) {
@@ -413,7 +417,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     if plan.waypoints.is_empty() {
         plan.diagnostics.push("No supported PedroPathing BezierLine/BezierCurve paths were found. The selected autonomous cannot be driven yet.".to_owned());
     }
-    if !clean.contains("followPath") && !clean.contains("followPath(") {
+    if !plan.follow_path_called {
         plan.diagnostics.push("No follower.followPath(...) call was detected; route extraction is preview-only until a supported start call is added.".to_owned());
     }
     plan
