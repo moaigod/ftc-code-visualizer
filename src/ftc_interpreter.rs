@@ -330,6 +330,8 @@ pub struct AutonomousMechanismAction {
     pub minimum_flywheel_velocity: Option<f32>,
     /// Original Java if-condition guarding this motor command, when present.
     pub condition: Option<String>,
+    /// Java waitUntil predicate that must become true before this action runs.
+    pub wait_until: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -671,12 +673,28 @@ fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(Strin
                 if matches!(role, MotorRole::Other | MotorRole::Drive(_)) { continue; }
                 let minimum_flywheel_velocity = minimum_flywheel_velocity_for_command(&body, lambda_open, lambda_end, command_at, source);
                 let condition = condition_for_command(&body, lambda_open, lambda_end, command_at);
-                actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity, condition });
+                let wait_until = wait_until_condition(&body);
+                actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity, condition, wait_until });
             }
         }
         if !actions.is_empty() { result.push((method.name.clone(), actions)); }
     }
     result
+}
+
+fn wait_until_condition(tokens: &[Token]) -> Option<String> {
+    for i in 0..tokens.len().saturating_sub(2) {
+        if !tokens[i].ident_is("waitUntil") || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) {
+            continue;
+        }
+        let end = matching(tokens, i + 1, "(", ")")?;
+        let args = split_arguments(&tokens[i + 2..end]);
+        let first = args.first()?;
+        let arrow = first.iter().position(|token| token.punct("->"))?;
+        let predicate = tokens_to_text(&first[arrow + 1..]);
+        if !predicate.trim().is_empty() { return Some(predicate); }
+    }
+    None
 }
 
 fn condition_for_command(
