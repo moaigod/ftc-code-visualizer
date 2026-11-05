@@ -782,7 +782,15 @@ fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(Strin
                 if matches!(role, MotorRole::Other | MotorRole::Drive(_)) { continue; }
                 let minimum_flywheel_velocity = minimum_flywheel_velocity_for_command(&body, lambda_open, lambda_end, command_at, source);
                 let condition = condition_for_command(&body, lambda_open, lambda_end, command_at);
-                let wait_until = wait_until_condition(&body);
+                // A waitUntil in the enclosing command sequence gates the
+                // feeder action that follows it. It must not be copied onto
+                // the flywheel setVelocity action, or the shooter can never
+                // spin up enough to satisfy its own wait condition.
+                let wait_until = if matches!(role, MotorRole::Feeder) {
+                    wait_until_condition(&body)
+                } else {
+                    None
+                };
                 actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity, condition, wait_until, delay_before_ms: 0 });
             }
         }
@@ -796,12 +804,14 @@ fn wait_until_condition(tokens: &[Token]) -> Option<String> {
         if !tokens[i].ident_is("waitUntil") || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) {
             continue;
         }
-        let end = matching(tokens, i + 1, "(", ")")?;
+        let Some(end) = matching(tokens, i + 1, "(", ")") else { continue; };
         let args = split_arguments(&tokens[i + 2..end]);
-        let first = args.first()?;
+        let Some(first) = args.first() else { continue; };
         // The lightweight Java tokenizer emits '-' and '>' as separate
         // punctuation tokens, so recognize the lambda arrow as a pair.
-        let arrow = first.windows(2).position(|pair| pair[0].punct("-") && pair[1].punct(">"))?;
+        let Some(arrow) = first.windows(2).position(|pair| pair[0].punct("-") && pair[1].punct(">")) else {
+            continue;
+        };
         let predicate = tokens_to_text(&first[arrow + 2..]);
         if !predicate.trim().is_empty() { return Some(predicate); }
     }
