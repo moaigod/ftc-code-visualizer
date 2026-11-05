@@ -576,8 +576,13 @@ where
 
     for operator in [">=", "<=", "==", "!=", ">", "<"] {
         if let Some((left, right)) = split_boolean_operator(expr, operator) {
-            let a = resolve_number(left.trim())?;
-            let b = resolve_number(right.trim())?;
+            // FTC code commonly casts DcMotor variables to DcMotorEx before
+            // calling getVelocity(). The cast changes the Java static type,
+            // not the hardware object, so remove it before resolving telemetry.
+            let left = strip_reference_casts(left.trim());
+            let right = strip_reference_casts(right.trim());
+            let a = resolve_number(&left)?;
+            let b = resolve_number(&right)?;
             return Some(match operator {
                 ">=" => a >= b, "<=" => a <= b, "==" => (a-b).abs() < f32::EPSILON,
                 "!=" => (a-b).abs() >= f32::EPSILON, ">" => a > b, "<" => a < b,
@@ -586,6 +591,40 @@ where
         }
     }
     resolve_number(expr).map(|value| value != 0.0)
+}
+
+fn strip_reference_casts(expression: &str) -> String {
+    let mut output = String::with_capacity(expression.len());
+    let mut rest = expression;
+    while let Some(start) = rest.find("((") {
+        output.push_str(&rest[..start]);
+        let after_open = &rest[start + 2..];
+        let Some(type_end) = after_open.find(')') else {
+            output.push_str(&rest[start..]);
+            return output;
+        };
+        let after_type = after_open[type_end + 1..].trim_start();
+        let ident_len = after_type.bytes()
+            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+            .count();
+        if ident_len == 0 {
+            output.push_str("((");
+            rest = after_open;
+            continue;
+        }
+        let after_ident = &after_type[ident_len..];
+        let after_ident_trimmed = after_ident.trim_start();
+        if let Some(tail) = after_ident_trimmed.strip_prefix(')') {
+            // Replace ((SomeMotorType)motorVariable) with motorVariable.
+            output.push_str(&after_type[..ident_len]);
+            rest = tail;
+        } else {
+            output.push_str("((");
+            rest = after_open;
+        }
+    }
+    output.push_str(rest);
+    output
 }
 
 fn strip_outer_parentheses(mut expression: &str) -> &str {
@@ -647,6 +686,17 @@ fn split_boolean_operator<'a>(expression: &'a str, operator: &str) -> Option<(&'
 #[cfg(test)]
 mod boolean_tests {
     use super::*;
+
+    #[test]
+    fn strips_dc_motor_ex_casts_from_live_hardware_conditions() {
+        let condition = "((DcMotorEx)OuttakeL).getVelocity() > 1100 || ((DcMotorEx)OuttakeR).getVelocity() > 1100";
+        let result = evaluate_boolean(condition, &|value| {
+            if value == "OuttakeL.getVelocity()" { Some(1090.0) }
+            else if value == "OuttakeR.getVelocity()" { Some(1125.0) }
+            else { value.parse::<f32>().ok() }
+        });
+        assert_eq!(result, Some(true));
+    }
 
     #[test]
     fn evaluates_live_hardware_conditions() {
