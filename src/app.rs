@@ -675,18 +675,26 @@ impl VisualizerApp {
         self.intake_motor_velocity = approach(self.intake_motor_velocity, intake_target, 5200.0 * dt);
         self.feeder_motor_velocity = approach(self.feeder_motor_velocity, feeder_target, 3600.0 * dt);
 
-        // Flywheel velocity is an encoder-feedback velocity controller driving
-        // a rotor with inertia. The integral term helps it recover after shots.
+        // Model the flywheel's available torque as a function of its CURRENT
+        // speed, not its distance from the requested speed. While below the
+        // target, the controller asks for full available motor torque; the
+        // DC motor torque-speed curve then gradually reduces acceleration.
+        // Once the target is reached, use feedback to hold speed and recover
+        // from projectile impacts without easing off during spin-up.
         let error = self.flywheel_target_velocity - self.flywheel_velocity;
-        // A velocity-controlled flywheel should build speed quickly, then
-        // taper its acceleration as it approaches the requested RPM. Keep
-        // enough controller authority to overcome bearing/load drag above
-        // 1100 ticks/s so waitUntil(getVelocity() > 1100) remains reachable.
-        self.flywheel_velocity_integral =
-            (self.flywheel_velocity_integral + error * dt).clamp(-12000.0, 12000.0);
-        let motor_acceleration =
-            (error * 4.0 + self.flywheel_velocity_integral * 0.35).clamp(-9000.0, 9000.0);
-        let bearing_drag = self.flywheel_velocity * 0.45;
+        let free_speed = 6000.0_f32;
+        let max_acceleration = 9000.0 * (1.0 - self.flywheel_velocity / free_speed).clamp(0.0, 1.0);
+        let motor_acceleration = if self.flywheel_target_velocity <= 0.0 {
+            -self.flywheel_velocity * 3.0
+        } else if error > 0.0 {
+            max_acceleration
+        } else {
+            self.flywheel_velocity_integral =
+                (self.flywheel_velocity_integral + error * dt).clamp(-12000.0, 12000.0);
+            (error * 8.0 + self.flywheel_velocity_integral * 0.35)
+                .clamp(-max_acceleration, max_acceleration)
+        };
+        let bearing_drag = self.flywheel_velocity * 0.30;
         self.flywheel_velocity =
             (self.flywheel_velocity + (motor_acceleration - bearing_drag) * dt).max(0.0);
         if self.flywheel_target_velocity <= 0.0 && self.flywheel_velocity < 1.0 {
