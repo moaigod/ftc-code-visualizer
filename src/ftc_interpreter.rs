@@ -543,7 +543,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
                                     });
                                 }
                             } else {
-                                attach_command_action(name, method_actions, path_segments, startup_actions, *path_seen);
+                                attach_command_action(name, method_actions, path_segments, startup_actions, *path_seen, pending_action_delay_ms);
                             }
                         } else {
                             apply_command_node(child, source, named_paths, method_actions,
