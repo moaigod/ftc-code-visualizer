@@ -828,19 +828,33 @@ impl VisualizerApp {
         }
 
         if self.autonomous_running {
+            // Follow a short look-ahead target instead of stopping at every
+            // sampled curve point. This avoids the visible stop/start motion
+            // caused by snapping to each waypoint independently.
+            while self.autonomous_waypoint_index < self.autonomous_waypoints.len() {
+                let point = self.autonomous_waypoints[self.autonomous_waypoint_index];
+                let distance = (point.0 - self.robot_x).hypot(point.1 - self.robot_y);
+                if distance < 2.5 && self.autonomous_waypoint_index + 1 < self.autonomous_waypoints.len() {
+                    self.autonomous_waypoint_index += 1;
+                } else {
+                    break;
+                }
+            }
+
             if let Some(target) = self.autonomous_waypoints.get(self.autonomous_waypoint_index).copied() {
                 let dx = target.0 - self.robot_x;
                 let dy = target.1 - self.robot_y;
                 let distance = dx.hypot(dy);
-                if distance <= 1.0 {
-                    self.robot_x = target.0;
-                    self.robot_y = target.1;
-                    self.autonomous_waypoint_index += 1;
-                } else {
-                    let speed = 34.0_f32.min(distance * 2.2);
-                    self.robot_x += dx / distance * speed * dt;
-                    self.robot_y += dy / distance * speed * dt;
-                    self.heading_deg = dx.atan2(dy).to_degrees().rem_euclid(360.0);
+                // Ramp speed gradually so the robot does not jump to full
+                // speed on the first simulation frame.
+                self.forward_velocity = (self.forward_velocity + 85.0 * dt).min(34.0);
+                let step = (self.forward_velocity * dt).min(distance);
+                if distance > 0.001 {
+                    self.robot_x += dx / distance * step;
+                    self.robot_y += dy / distance * step;
+                    let desired_heading = dx.atan2(dy).to_degrees().rem_euclid(360.0);
+                    let heading_delta = (desired_heading - self.heading_deg + 540.0).rem_euclid(360.0) - 180.0;
+                    self.heading_deg = (self.heading_deg + heading_delta * (1.0 - (-8.0 * dt).exp())).rem_euclid(360.0);
                 }
                 self.resolve_robot_wall_collisions();
                 self.elapsed_seconds += dt;
