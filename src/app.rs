@@ -80,12 +80,22 @@ pub struct VisualizerApp {
     pollen_status: String,
     drive_wheel_power: [f32; 4],
     drive_wheel_velocity: [f32; 4],
+    drive_wheel_encoder_ticks: [f32; 4],
+    drive_wheel_encoder_last_ticks: [f32; 4],
+    drive_wheel_velocity_integral: [f32; 4],
+    odometry_x: f32,
+    odometry_y: f32,
+    odometry_heading_deg: f32,
+    sensor_update_timer: f32,
     previous_gamepad_buttons: Vec<String>,
     flower_intake_cooldown: f32,
     intake_running: bool,
     feeder_running: bool,
     intake_power: f32,
     feeder_power: f32,
+    intake_motor_velocity: f32,
+    feeder_motor_velocity: f32,
+    flywheel_velocity_integral: f32,
     flywheel_velocity: f32,
     flywheel_target_velocity: f32,
     ramp_angle_deg: f32,
@@ -135,12 +145,22 @@ impl Default for VisualizerApp {
             pollen_status: "4 preloaded pollen onboard.".to_owned(),
             drive_wheel_power: [0.0; 4],
             drive_wheel_velocity: [0.0; 4],
+            drive_wheel_encoder_ticks: [0.0; 4],
+            drive_wheel_encoder_last_ticks: [0.0; 4],
+            drive_wheel_velocity_integral: [0.0; 4],
+            odometry_x: 24.0,
+            odometry_y: 24.0,
+            odometry_heading_deg: 0.0,
+            sensor_update_timer: 0.0,
             previous_gamepad_buttons: Vec::new(),
             flower_intake_cooldown: 0.0,
             intake_running: false,
             feeder_running: false,
             intake_power: 0.0,
             feeder_power: 0.0,
+            intake_motor_velocity: 0.0,
+            feeder_motor_velocity: 0.0,
+            flywheel_velocity_integral: 0.0,
             flywheel_velocity: 0.0,
             flywheel_target_velocity: 0.0,
             ramp_angle_deg: 35.0,
@@ -192,6 +212,13 @@ impl VisualizerApp {
         self.turn_velocity = 0.0;
         self.drive_wheel_power = [0.0; 4];
         self.drive_wheel_velocity = [0.0; 4];
+        self.drive_wheel_encoder_ticks = [0.0; 4];
+        self.drive_wheel_encoder_last_ticks = [0.0; 4];
+        self.drive_wheel_velocity_integral = [0.0; 4];
+        self.odometry_x = self.robot_x;
+        self.odometry_y = self.robot_y;
+        self.odometry_heading_deg = self.heading_deg;
+        self.sensor_update_timer = 0.0;
         self.previous_gamepad_buttons.clear();
 
         self.carried_elements = vec![
@@ -206,6 +233,9 @@ impl VisualizerApp {
         self.feeder_running = false;
         self.intake_power = 0.0;
         self.feeder_power = 0.0;
+        self.intake_motor_velocity = 0.0;
+        self.feeder_motor_velocity = 0.0;
+        self.flywheel_velocity_integral = 0.0;
         self.flywheel_velocity = 0.0;
         self.flywheel_target_velocity = 0.0;
         self.shot_cooldown = 0.0;
@@ -267,6 +297,9 @@ impl VisualizerApp {
             // zero degrees toward +Y and positive rotation toward +X.
             self.heading_deg = (90.0 - heading_rad.to_degrees()).rem_euclid(360.0);
         }
+        self.odometry_x = self.robot_x;
+        self.odometry_y = self.robot_y;
+        self.odometry_heading_deg = self.heading_deg;
         self.autonomous_segments = plan.path_segments.clone();
         self.autonomous_segment_index = 0;
         if let Some(first) = self.autonomous_segments.first() {
@@ -433,8 +466,11 @@ impl VisualizerApp {
             ).unwrap_or(1.0);
             self.intake_running = self.intake_power > 0.0;
         } else if normalized.contains("feeder") {
-            self.feeder_running = true;
-            self.feeder_power = 1.0;
+            self.feeder_power = self.detected_motor_power_for_button(
+                button,
+                crate::ftc_interpreter::MotorRole::Feeder,
+            ).unwrap_or(1.0);
+            self.feeder_running = self.feeder_power > 0.0;
             self.pollen_status = "Feeder activated by the selected OpMode.".to_owned();
         } else if normalized.contains("outtake") || normalized.contains("shooter") {
             let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i)).map(|m| m.source.as_str()).unwrap_or("");
@@ -560,12 +596,89 @@ impl VisualizerApp {
         // normalized powers avoids letting the slower motor completely
         // bottleneck the shooter, while increasing either motor's power
         // increases the overall firing cadence. Ramp angle only affects flight.
-        let intake_rate = if has_intake { self.intake_power } else { 1.0 };
-        let feeder_rate = if has_feeder { self.feeder_power } else { 1.0 };
+        let intake_rate = if has_intake { (self.intake_motor_velocity / 1800.0).clamp(0.0, 1.0) } else { 1.0 };
+        let feeder_rate = if has_feeder { (self.feeder_motor_velocity / 1450.0).clamp(0.0, 1.0) } else { 1.0 };
         let feed_rate = ((intake_rate + feeder_rate) * 0.5).clamp(0.1, 1.0);
         self.shot_cooldown = 0.16 / feed_rate;
         let name=match kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
         self.pollen_status=format!("{name} fired FIFO. {} element(s) remain.",self.carried_elements.len());
+    }
+
+    fn update_drive_motors(
+        &mut self,
+        target_forward: f32,
+        target_strafe: f32,
+        target_turn_deg_s: f32,
+        dt: f32,
+    ) {
+        // Convert chassis commands into individual mecanum wheel speeds.
+        // Rotation uses the 9-inch half-width as the effective wheel radius.
+        let rotation_speed = target_turn_deg_s.to_radians() * 9.0;
+        let raw = [
+            target_forward + target_strafe + rotation_speed,
+            target_forward - target_strafe - rotation_speed,
+            target_forward - target_strafe + rotation_speed,
+            target_forward + target_strafe - rotation_speed,
+        ];
+        let largest = raw.iter().fold(MAX_SPEED_IN_S, |m, value| m.max(value.abs()));
+        let scale = (MAX_SPEED_IN_S / largest).min(1.0);
+        let targets = raw.map(|value| value * scale);
+        self.drive_wheel_power = targets.map(|value| value / MAX_SPEED_IN_S);
+
+        // Each wheel has its own encoder velocity loop and motor acceleration.
+        // Encoder resolution is modeled at 28 ticks per inch of wheel travel.
+        for i in 0..4 {
+            let measured_velocity = if dt > 0.0 {
+                (self.drive_wheel_encoder_ticks[i] - self.drive_wheel_encoder_last_ticks[i])
+                    / (28.0 * dt)
+            } else {
+                self.drive_wheel_velocity[i]
+            };
+            self.drive_wheel_encoder_last_ticks[i] = self.drive_wheel_encoder_ticks[i];
+            let error = targets[i] - measured_velocity;
+            self.drive_wheel_velocity_integral[i] =
+                (self.drive_wheel_velocity_integral[i] + error * dt).clamp(-80.0, 80.0);
+            let correction = 0.18 * error + 0.025 * self.drive_wheel_velocity_integral[i];
+            let motor_command = (targets[i] + correction).clamp(-MAX_SPEED_IN_S, MAX_SPEED_IN_S);
+            self.drive_wheel_velocity[i] =
+                approach(self.drive_wheel_velocity[i], motor_command, 190.0 * dt);
+            self.drive_wheel_encoder_ticks[i] += self.drive_wheel_velocity[i] * dt * 28.0;
+        }
+
+        // Mecanum inverse kinematics. Lateral motion has lower effective
+        // traction than forward motion because of the roller contact geometry.
+        let w = self.drive_wheel_velocity;
+        let wheel_forward = (w[0] + w[1] + w[2] + w[3]) * 0.25;
+        let wheel_strafe = (w[0] - w[1] - w[2] + w[3]) * 0.25;
+        let wheel_turn = (w[0] - w[1] + w[2] - w[3]) * 0.25;
+        self.forward_velocity = wheel_forward * 0.96;
+        self.strafe_velocity = wheel_strafe * 0.84;
+        self.turn_velocity = (wheel_turn / 9.0).to_degrees();
+        self.drive_wheel_velocity = w;
+    }
+
+    fn update_mechanism_motors(&mut self, dt: f32) {
+        // DC motor speed approaches its free-speed target over time rather
+        // than instantly matching setPower(). The feeder has a slower loaded response.
+        let intake_target = if self.intake_running { self.intake_power.clamp(0.0, 1.0) * 1800.0 } else { 0.0 };
+        let feeder_target = if self.feeder_running { self.feeder_power.clamp(0.0, 1.0) * 1450.0 } else { 0.0 };
+        self.intake_motor_velocity = approach(self.intake_motor_velocity, intake_target, 5200.0 * dt);
+        self.feeder_motor_velocity = approach(self.feeder_motor_velocity, feeder_target, 3600.0 * dt);
+
+        // Flywheel velocity is an encoder-feedback velocity controller driving
+        // a rotor with inertia. The integral term helps it recover after shots.
+        let error = self.flywheel_target_velocity - self.flywheel_velocity;
+        self.flywheel_velocity_integral =
+            (self.flywheel_velocity_integral + error * dt).clamp(-6000.0, 6000.0);
+        let motor_acceleration =
+            (error * 2.0 + self.flywheel_velocity_integral * 0.12).clamp(-3600.0, 3600.0);
+        let bearing_drag = self.flywheel_velocity * 0.72;
+        self.flywheel_velocity =
+            (self.flywheel_velocity + (motor_acceleration - bearing_drag) * dt).max(0.0);
+        if self.flywheel_target_velocity <= 0.0 && self.flywheel_velocity < 1.0 {
+            self.flywheel_velocity = 0.0;
+            self.flywheel_velocity_integral = 0.0;
+        }
     }
 
     fn update_loose_pollen_physics(&mut self, dt: f32) {
@@ -630,10 +743,28 @@ impl VisualizerApp {
                 continue;
             }
 
+            let mut element_vx = element.vx;
+            let mut element_vy = element.vy;
+            if self.intake_running && self.intake_motor_velocity > 80.0 {
+                let heading = self.heading_deg.to_radians();
+                let mouth_x = self.robot_x + heading.sin() * 9.5;
+                let mouth_y = self.robot_y + heading.cos() * 9.5;
+                let dx = mouth_x - element.x;
+                let dy = mouth_y - element.y;
+                let distance = dx.hypot(dy);
+                let relative_x = dx * heading.cos() + dy * heading.sin();
+                let relative_y = -dx * heading.sin() + dy * heading.cos();
+                if distance > 0.01 && distance < 22.0 && relative_x.abs() < 15.0 && relative_y > -1.0 {
+                    let pull = (self.intake_motor_velocity / 1800.0).clamp(0.0, 1.0);
+                    let acceleration = 72.0 * pull * (1.0 - distance / 26.0).max(0.15);
+                    element_vx += dx / distance * acceleration * dt;
+                    element_vy += dy / distance * acceleration * dt;
+                }
+            }
             let (body, _) = world.insert(
                 RigidBodyBuilder::dynamic()
                     .translation(Vector::new(element.x, element.y))
-                    .linvel(Vector::new(element.vx, element.vy))
+                    .linvel(Vector::new(element_vx, element_vy))
                     // Match the loose-element rolling resistance used by the
                     // previous field model so pieces naturally settle.
                     .linear_damping(2.8)
@@ -967,13 +1098,13 @@ impl VisualizerApp {
         match key.as_str() {
             "heading" | "headingdeg" | "robotheading" | "heading_degrees" => return format!("{:.1}°", self.heading_deg),
             "headingrad" | "headingradians" | "robotpose.heading()" | "follower.pose().heading()" => {
-                return format!("{:.3} rad", self.heading_deg.to_radians());
+                return format!("{:.3} rad", self.odometry_heading_deg.to_radians());
             }
             "x" | "robotx" | "posx" | "getx()" | "robotpose.x()" | "follower.pose().x()" => {
-                return format!("{:.1} in", self.robot_x);
+                return format!("{:.1} in", self.odometry_x);
             }
             "y" | "roboty" | "posy" | "gety()" | "robotpose.y()" | "follower.pose().y()" => {
-                return format!("{:.1} in", self.robot_y);
+                return format!("{:.1} in", self.odometry_y);
             }
             "runtime" | "elapsedtime" | "elapsed_seconds" => return format!("{:.2} s", self.elapsed_seconds),
             "pollen" | "pollencount" | "pollen_count" | "robot.pollen" => return format!("{}/4 total elements", self.carried_elements.len()),
@@ -1059,12 +1190,11 @@ impl VisualizerApp {
         self.intake_cycle_timer = (self.intake_cycle_timer - dt).max(0.0);
         if self.intake_running && self.intake_cycle_timer <= 0.0 {
             self.intake_pollen();
-            self.intake_cycle_timer = 0.4 / self.intake_power.clamp(0.1, 1.0);
+            self.intake_cycle_timer = 0.075 / (self.intake_motor_velocity / 1800.0).clamp(0.15, 1.0);
         } else if !self.intake_running {
             self.intake_cycle_timer = 0.0;
         }
-        let flywheel_rate = if self.flywheel_target_velocity > self.flywheel_velocity { 1800.0 } else { 900.0 };
-        self.flywheel_velocity = approach(self.flywheel_velocity, self.flywheel_target_velocity, flywheel_rate * dt);
+        self.update_mechanism_motors(dt);
         self.shot_cooldown = (self.shot_cooldown - dt).max(0.0);
         if self.feeder_running && self.shot_cooldown <= 0.0 {
             self.shoot_pollen();
@@ -1089,8 +1219,8 @@ impl VisualizerApp {
             }
 
             if let Some(target) = self.autonomous_waypoints.get(self.autonomous_waypoint_index).copied() {
-                let dx = target.0 - self.robot_x;
-                let dy = target.1 - self.robot_y;
+                let dx = target.0 - self.odometry_x;
+                let dy = target.1 - self.odometry_y;
                 let distance = dx.hypot(dy);
                 // Ramp speed gradually so the robot does not jump to full
                 // speed on the first simulation frame.
@@ -1105,14 +1235,17 @@ impl VisualizerApp {
                         .and_then(|heading| *heading)
                         .map(|heading_rad| (90.0 - heading_rad.to_degrees()).rem_euclid(360.0))
                         .unwrap_or_else(|| dx.atan2(dy).to_degrees().rem_euclid(360.0));
-                    let heading_delta = (desired_heading - self.heading_deg + 540.0).rem_euclid(360.0) - 180.0;
-                    self.heading_deg = (self.heading_deg + heading_delta * (1.0 - (-14.0 * dt).exp())).rem_euclid(360.0);
-                    let radians = self.heading_deg.to_radians();
+                    let heading_delta = (desired_heading - self.odometry_heading_deg + 540.0).rem_euclid(360.0) - 180.0;
+                    let radians = self.odometry_heading_deg.to_radians();
                     let world_vx = dx / distance * target_speed;
                     let world_vy = dy / distance * target_speed;
-                    self.forward_velocity = world_vx * radians.sin() + world_vy * radians.cos();
-                    self.strafe_velocity = world_vx * radians.cos() - world_vy * radians.sin();
-                    self.turn_velocity = 0.0;
+                    let target_forward = world_vx * radians.sin() + world_vy * radians.cos();
+                    let target_strafe = world_vx * radians.cos() - world_vy * radians.sin();
+                    // P-D heading control: the controller uses the delayed IMU
+                    // estimate and damps rotation using measured angular velocity.
+                    let target_turn = (heading_delta * 4.2 - self.turn_velocity * 0.18)
+                        .clamp(-MAX_TURN_DEG_S, MAX_TURN_DEG_S);
+                    self.update_drive_motors(target_forward, target_strafe, target_turn, dt);
                 }
                 ctx.request_repaint();
             } else {
@@ -1242,34 +1375,44 @@ impl VisualizerApp {
             let f = self.stick_forward;
             let s = self.stick_strafe;
             let r = self.stick_turn;
-            let mut wheels = [f + s + r, f - s - r, f - s + r, f + s - r];
-            let largest = wheels.iter().fold(1.0_f32, |m, p| m.max(p.abs()));
-            for power in &mut wheels { *power /= largest; }
-            self.drive_wheel_power = wheels;
-            self.drive_wheel_velocity = wheels.map(|power| power * MAX_SPEED_IN_S);
-
-            // Convert wheel powers back into robot-relative forward, strafe and turn.
-            let target_forward = (wheels[0] + wheels[1] + wheels[2] + wheels[3]) * 0.25;
-            let target_strafe = (wheels[0] - wheels[1] - wheels[2] + wheels[3]) * 0.25;
-            let target_turn = (wheels[0] - wheels[1] + wheels[2] - wheels[3]) * 0.25;
-
-            // Acceleration-limited motor response.
-            self.forward_velocity = approach(self.forward_velocity, target_forward * MAX_SPEED_IN_S, 72.0 * dt);
-            self.strafe_velocity = approach(self.strafe_velocity, target_strafe * MAX_SPEED_IN_S, 72.0 * dt);
-            self.turn_velocity = approach(self.turn_velocity, target_turn * MAX_TURN_DEG_S, 540.0 * dt);
+            // Joystick values are chassis velocity requests. Individual motor
+            // controllers, encoders, traction, and mecanum mixing run below.
+            self.update_drive_motors(
+                f * MAX_SPEED_IN_S,
+                s * MAX_SPEED_IN_S,
+                r * MAX_TURN_DEG_S,
+                dt,
+            );
 
             // Rapier integrates the chassis pose and resolves contact impulses.
             self.elapsed_seconds += dt;
             ctx.request_repaint();
         } else if self.is_running {
-            self.forward_velocity = self.drive_speed;
-            self.strafe_velocity = 0.0;
-            self.turn_velocity = 0.0;
+            self.update_drive_motors(self.drive_speed, 0.0, 0.0, dt);
             self.elapsed_seconds += dt;
             ctx.request_repaint();
         }
 
         self.update_loose_pollen_physics(dt);
+
+        // A 50 Hz localization update with small encoder/IMU-like lag and
+        // deterministic measurement noise. Autonomous and telemetry consume
+        // this estimate rather than the hidden ground-truth pose.
+        self.sensor_update_timer += dt;
+        if self.sensor_update_timer >= 0.02 {
+            self.sensor_update_timer %= 0.02;
+            let sample_phase = self.elapsed_seconds * 17.0;
+            let x_measurement = self.robot_x + sample_phase.sin() * 0.035;
+            let y_measurement = self.robot_y + (sample_phase * 0.83).cos() * 0.035;
+            self.odometry_x = approach(self.odometry_x, x_measurement, 85.0 * dt);
+            self.odometry_y = approach(self.odometry_y, y_measurement, 85.0 * dt);
+            let heading_error = (self.heading_deg - self.odometry_heading_deg + 540.0)
+                .rem_euclid(360.0) - 180.0;
+            self.odometry_heading_deg = (self.odometry_heading_deg
+                + (heading_error * 0.55 + sample_phase.sin() * 0.025))
+                .rem_euclid(360.0);
+        }
+
         let objects_moving = self.field_pollen.iter().any(|element| {
             element.vx.abs() + element.vy.abs() > 0.05
         });
@@ -1827,7 +1970,14 @@ impl eframe::App for VisualizerApp {
             self.feeder_running = pressed_buttons.iter().any(|button| {
                 actions.iter().any(|(mapped, action)| mapped == button && action.contains("feeder"))
             });
-            self.feeder_power = if self.feeder_running { 1.0 } else { 0.0 };
+            self.feeder_power = if self.feeder_running {
+                pressed_buttons.iter().find(|button| {
+                    actions.iter().any(|(mapped, action)| mapped == *button && action.contains("feeder"))
+                }).and_then(|button| self.detected_motor_power_for_button(
+                    button,
+                    crate::ftc_interpreter::MotorRole::Feeder,
+                )).unwrap_or(1.0)
+            } else { 0.0 };
         }
         let newly_pressed = pressed_buttons.iter()
             .filter(|button| !self.previous_gamepad_buttons.contains(button))
@@ -1977,7 +2127,8 @@ impl eframe::App for VisualizerApp {
             ui.label(&self.controller_status);
             ui.label("Left stick: robot-relative forward / strafe");
             ui.label("Right stick X: rotate");
-            ui.label("Mecanum wheel mixing with normalized wheel power and acceleration.");
+            ui.label("Mecanum wheel mixing with per-wheel encoder velocity control and motor acceleration.");
+            ui.label(format!("Estimated pose: X {:.1} · Y {:.1} · heading {:.1}°", self.odometry_x, self.odometry_y, self.odometry_heading_deg));
             ui.label(format!("Input: F {:.2} · S {:.2} · R {:.2}",
                 self.stick_forward, self.stick_strafe, self.stick_turn));
             ui.collapsing("Drive motor power / velocity", |ui| {
@@ -1994,6 +2145,7 @@ impl eframe::App for VisualizerApp {
             ui.label(format!("Pollen: {pc} · Nectar: {nc}"));
             ui.label(format!("Shoot order: {}",self.carried_elements.iter().map(|item|match item.kind{ElementKind::Pollen=>"P",ElementKind::Nectar=>"N"}).collect::<Vec<_>>().join(" → ")));
             ui.label(format!("Flywheel: {:.0}/{:.0} ticks/s", self.flywheel_velocity, self.flywheel_target_velocity));
+            ui.label(format!("Intake roller: {:.0} RPM · Feeder: {:.0} RPM", self.intake_motor_velocity, self.feeder_motor_velocity));
             ui.add(egui::Slider::new(&mut self.ramp_angle_deg, 0.0..=80.0).text("Ramp angle").suffix("°"));
             ui.label(format!("Intake: {} · Feeder: {}", if self.intake_running { "active" } else { "off" }, if self.feeder_running { "active" } else { "off" }));
             ui.label(&self.pollen_status);
