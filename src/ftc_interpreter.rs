@@ -325,6 +325,8 @@ fn strip_comments(source: &str) -> String {
 pub struct AutonomousPlan {
     pub start_pose: Option<(f32, f32, f32)>,
     pub waypoints: Vec<(f32, f32)>,
+    /// Optional PedroPathing heading in radians for each sampled waypoint.
+    pub waypoint_headings: Vec<Option<f32>>,
     pub follow_path_called: bool,
     pub diagnostics: Vec<String>,
 }
@@ -407,7 +409,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
             }
             p += 1;
         }
-        append_sampled_path(&mut plan.waypoints, &points, if is_line { 12 } else { 24 });
+        append_sampled_path(&mut plan.waypoints, &mut plan.waypoint_headings, &points, if is_line { 12 } else { 24 });
     }
 
     // Newer API: Paths.line(startPose, endPose).linear(startPose, endPose).
@@ -416,15 +418,15 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         if !tokens[i].ident_is("linear") || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) { continue; }
         let Some(end) = matching(&tokens, i + 1, "(", ")") else { continue; };
         let args = split_arguments(&tokens[i + 2..end]);
-        let mut points = Vec::new();
+        let mut poses = Vec::new();
         for arg in args {
             let name = tokens_to_text(arg);
             if let Some((_, pose)) = named_poses.iter().find(|(n, _)| n == &name) {
-                points.push((pose.0, pose.1));
+                poses.push(*pose);
             }
         }
-        if points.len() >= 2 {
-            append_sampled_path(&mut plan.waypoints, &points, 24);
+        if poses.len() >= 2 {
+            append_sampled_pose_path(&mut plan.waypoints, &mut plan.waypoint_headings, &poses, 24);
         }
     }
 
@@ -437,6 +439,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     if let Some((x, y, _)) = plan.start_pose {
         if plan.waypoints.first().is_some_and(|p| (p.0-x).hypot(p.1-y) < 0.5) {
             plan.waypoints.remove(0);
+            if !plan.waypoint_headings.is_empty() { plan.waypoint_headings.remove(0); }
         }
     }
     if plan.waypoints.is_empty() {
@@ -448,7 +451,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     plan
 }
 
-fn append_sampled_path(waypoints: &mut Vec<(f32, f32)>, points: &[(f32, f32)], samples: usize) {
+fn append_sampled_path(waypoints: &mut Vec<(f32, f32)>, headings: &mut Vec<Option<f32>>, points: &[(f32, f32)], samples: usize) {
     if points.len() < 2 { return; }
     for step in 0..=samples {
         let t = step as f32 / samples as f32;
@@ -466,6 +469,31 @@ fn append_sampled_path(waypoints: &mut Vec<(f32, f32)>, points: &[(f32, f32)], s
         };
         if waypoints.last().is_none_or(|last| (last.0-point.0).hypot(last.1-point.1) > 0.05) {
             waypoints.push(point);
+            headings.push(None);
+        }
+    }
+}
+
+fn append_sampled_pose_path(
+    waypoints: &mut Vec<(f32, f32)>,
+    headings: &mut Vec<Option<f32>>,
+    poses: &[(f32, f32, f32)],
+    samples: usize,
+) {
+    if poses.len() < 2 { return; }
+    for segment in poses.windows(2) {
+        let start = segment[0];
+        let end = segment[1];
+        let mut delta = (end.2 - start.2 + std::f32::consts::PI)
+            .rem_euclid(2.0 * std::f32::consts::PI) - std::f32::consts::PI;
+        if delta <= -std::f32::consts::PI { delta = std::f32::consts::PI; }
+        for step in 0..=samples {
+            let t = step as f32 / samples as f32;
+            let point = (start.0 + (end.0 - start.0) * t, start.1 + (end.1 - start.1) * t);
+            if waypoints.last().is_none_or(|last| (last.0-point.0).hypot(last.1-point.1) > 0.05) {
+                waypoints.push(point);
+                headings.push(Some(start.2 + delta * t));
+            }
         }
     }
 }
