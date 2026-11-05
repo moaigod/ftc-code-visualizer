@@ -969,6 +969,7 @@ impl VisualizerApp {
                     self.autonomous_running = false;
                     self.autonomous_status = "Autonomous path complete.".to_owned();
                 }
+            }
         } else if self.teleop_active {
             self.poll_controller();
 
