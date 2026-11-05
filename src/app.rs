@@ -805,9 +805,18 @@ impl VisualizerApp {
                     vy: 0.0,
                 });
 
-                // Every newly active cell starts with its three preloaded
-                // Nectar pieces, not just the first cell at match start.
-                let starting_nectar_load = HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS;
+                // The three preloaded Nectar pieces exist only in the
+                // initially active cell at match start. Later cells do not
+                // receive replacement Nectar after a tip.
+                let has_starting_nectar = match side {
+                    HiveSide::Red => self.red_hive_tip_count == 0,
+                    HiveSide::Blue => self.blue_hive_tip_count == 0,
+                };
+                let starting_nectar_load = if has_starting_nectar {
+                    HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS
+                } else {
+                    0.0
+                };
                 let load = starting_nectar_load + nectar_count as f32 * HIVE_NECTAR_LOAD_UNITS
                     + pollen_count as f32 * HIVE_POLLEN_LOAD_UNITS;
 
@@ -876,25 +885,6 @@ impl VisualizerApp {
                             element.vy = fieldward_y * fall_speed;
                             released_index += 1;
                         }
-                    }
-                    // The opposite cell is now active; populate its three
-                    // starting Nectar so the next scoring cycle has the same setup.
-                    let active_cell_center = match side {
-                        HiveSide::Red => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
-                        HiveSide::Blue => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
-                    };
-                    for (offset_x, offset_y) in [(-1.8_f32, -1.0_f32), (1.8, -1.0), (0.0, 2.0)] {
-                        self.field_pollen.push(Pollen {
-                            x: active_cell_center.0 + offset_x,
-                            y: active_cell_center.1 + offset_y,
-                            radius: NECTAR_RADIUS_IN,
-                            from_flower: false,
-                            scored: false,
-                            kind: ElementKind::Nectar,
-                            hive: Some(side),
-                            vx: 0.0,
-                            vy: 0.0,
-                        });
                     }
                     self.pollen_status = format!("{} hive tipped. Scoring elements spilled out and scattered.", if side == HiveSide::Red { "Red" } else { "Blue" });
                 } else {
