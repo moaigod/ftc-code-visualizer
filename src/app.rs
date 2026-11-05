@@ -864,7 +864,12 @@ impl VisualizerApp {
                                 0.0
                             };
                             let wobble = (phase + released_index as f32 * 1.73).sin() * 0.18;
-                            let lateral = (spread + wobble) * (19.0 + (released_index % 3) as f32 * 4.0);
+                            // Give every released piece a sideways component,
+                            // even when only one element is spilling. Alternate
+                            // the bias so the spill fans out on both sides.
+                            let side_bias = if released_index % 2 == 0 { -1.0_f32 } else { 1.0_f32 };
+                            let lateral = (spread * 0.55 + side_bias * 0.45 + wobble)
+                                * (26.0 + (released_index % 3) as f32 * 6.0);
                             let fall_speed = 43.0 + (released_index % 4) as f32 * 5.0;
                             element.scored = false;
                             element.vx = lateral;
