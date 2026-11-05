@@ -828,19 +828,22 @@ impl VisualizerApp {
                             self.blue_hive_extra_nectar = 0;
                         }
                     }
-                    // The scoring pieces are released from the hive and
-                    // scatter outward instead of remaining frozen in the cell.
-                    let released_count = self.field_pollen.iter()
-                        .filter(|element| element.scored && element.hive == Some(side))
-                        .count()
-                        .max(1);
-                    // The hives are elevated, so released elements fall out
-                    // toward the field rather than bursting in every direction.
-                    // Red spills toward the bottom edge; Blue spills toward the top.
+                    // Release scored pieces and the preloaded Nectar inside
+                    // the cell that has just tipped.
                     let tipped_cell_center = match side {
                         HiveSide::Red => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).1,
                         HiveSide::Blue => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).1,
                     };
+                    let is_released_element = |element: &&Pollen| {
+                        element.hive == Some(side)
+                            && (element.scored
+                                || (element.kind == ElementKind::Nectar
+                                    && point_in_hive_cell((element.x, element.y), tipped_cell_center)))
+                    };
+                    let released_count = self.field_pollen.iter()
+                        .filter(is_released_element)
+                        .count()
+                        .max(1);
                     // Field Y increases toward the top edge. Send the spill
                     // away from the field center based on the actual tipped cell,
                     // not the alliance color.
@@ -852,15 +855,19 @@ impl VisualizerApp {
                     let phase = (self.red_hive_tip_count + self.blue_hive_tip_count) as f32 * 0.37;
                     let mut released_index = 0usize;
                     for element in &mut self.field_pollen {
-                        if element.scored && element.hive == Some(side) {
+                        let should_release = element.hive == Some(side)
+                            && (element.scored
+                                || (element.kind == ElementKind::Nectar
+                                    && point_in_hive_cell((element.x, element.y), tipped_cell_center)));
+                        if should_release {
                             let spread = if released_count > 1 {
                                 (released_index as f32 / (released_count - 1) as f32) * 2.0 - 1.0
                             } else {
                                 0.0
                             };
                             let wobble = (phase + released_index as f32 * 1.73).sin() * 0.18;
-                            let lateral = (spread + wobble) * (24.0 + (released_index % 3) as f32 * 5.0);
-                            let fall_speed = 58.0 + (released_index % 4) as f32 * 7.0;
+                            let lateral = (spread + wobble) * (19.0 + (released_index % 3) as f32 * 4.0);
+                            let fall_speed = 43.0 + (released_index % 4) as f32 * 5.0;
                             element.scored = false;
                             element.vx = lateral;
                             element.vy = fieldward_y * fall_speed;
