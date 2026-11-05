@@ -433,3 +433,112 @@ mod java_ast_tests {
         assert!(program.methods.iter().any(|m| m.name == "routine"));
     }
 }
+
+
+/// Evaluate a Java boolean expression made from comparisons, &&, ||, !,
+/// parentheses, and numeric operands. The caller supplies live values for
+/// hardware reads and variables, keeping this parser independent of the UI.
+pub fn evaluate_boolean<F>(expression: &str, resolve_number: &F) -> Option<bool>
+where
+    F: Fn(&str) -> Option<f32>,
+{
+    let expr = strip_outer_parentheses(expression.trim());
+    if expr.is_empty() { return None; }
+    if let Some((left, right)) = split_boolean_operator(expr, "||") {
+        return Some(evaluate_boolean(left, resolve_number)? || evaluate_boolean(right, resolve_number)?);
+    }
+    if let Some((left, right)) = split_boolean_operator(expr, "&&") {
+        return Some(evaluate_boolean(left, resolve_number)? && evaluate_boolean(right, resolve_number)?);
+    }
+    if let Some(rest) = expr.strip_prefix('!') {
+        return Some(!evaluate_boolean(rest, resolve_number)?);
+    }
+    if expr == "true" { return Some(true); }
+    if expr == "false" { return Some(false); }
+
+    for operator in [">=", "<=", "==", "!=", ">", "<"] {
+        if let Some((left, right)) = split_boolean_operator(expr, operator) {
+            let a = resolve_number(left.trim())?;
+            let b = resolve_number(right.trim())?;
+            return Some(match operator {
+                ">=" => a >= b, "<=" => a <= b, "==" => (a-b).abs() < f32::EPSILON,
+                "!=" => (a-b).abs() >= f32::EPSILON, ">" => a > b, "<" => a < b,
+                _ => return None,
+            });
+        }
+    }
+    resolve_number(expr).map(|value| value != 0.0)
+}
+
+fn strip_outer_parentheses(mut expression: &str) -> &str {
+    loop {
+        let bytes = expression.as_bytes();
+        if bytes.first() != Some(&b'(') || bytes.last() != Some(&b')') { return expression; }
+        let mut depth = 0_i32;
+        let mut quote = 0_u8;
+        let mut escaped = false;
+        let mut closes_at_end = false;
+        for (i, &b) in bytes.iter().enumerate() {
+            if quote != 0 {
+                if escaped { escaped = false; }
+                else if b == b'\\\\' { escaped = true; }
+                else if b == quote { quote = 0; }
+                continue;
+            }
+            if b == b'"' || b == b'\\\\'' { quote = b; continue; }
+            if b == b'(' { depth += 1; }
+            if b == b')' {
+                depth -= 1;
+                if depth == 0 { closes_at_end = i == bytes.len()-1; break; }
+            }
+        }
+        if !closes_at_end { return expression; }
+        expression = expression[1..expression.len()-1].trim();
+    }
+}
+
+fn split_boolean_operator<'a>(expression: &'a str, operator: &str) -> Option<(&'a str, &'a str)> {
+    let bytes = expression.as_bytes();
+    let op = operator.as_bytes();
+    let mut depth = 0_i32;
+    let mut quote = 0_u8;
+    let mut escaped = false;
+    let mut i = 0;
+    while i + op.len() <= bytes.len() {
+        let b = bytes[i];
+        if quote != 0 {
+            if escaped { escaped = false; }
+            else if b == b'\\\\' { escaped = true; }
+            else if b == quote { quote = 0; }
+            i += 1; continue;
+        }
+        if b == b'"' || b == b'\\\\'' { quote = b; i += 1; continue; }
+        if b == b'(' { depth += 1; i += 1; continue; }
+        if b == b')' { depth -= 1; i += 1; continue; }
+        if depth == 0 && &bytes[i..i+op.len()] == op {
+            // A single > or < inside >= / <= is not the requested operator.
+            if (operator == ">" && bytes.get(i+1) == Some(&b'=')) ||
+               (operator == "<" && bytes.get(i+1) == Some(&b'=')) { i += 1; continue; }
+            return Some((&expression[..i], &expression[i+op.len()..]));
+        }
+        i += 1;
+    }
+    None
+}
+
+#[cfg(test)]
+mod boolean_tests {
+    use super::*;
+
+    #[test]
+    fn evaluates_live_hardware_conditions() {
+        let condition = "((DcMotorEx)OuttakeL).getVelocity() > 1100 || ((DcMotorEx)OuttakeR).getVelocity() > 1100";
+        let result = evaluate_boolean(condition, &|value| {
+            if value.contains("getVelocity") && value.contains("OuttakeL") { Some(1090.0) }
+            else if value.contains("getVelocity") && value.contains("OuttakeR") { Some(1125.0) }
+            else { value.trim().parse::<f32>().ok() }
+        });
+        assert_eq!(result, Some(true));
+        assert_eq!(evaluate_boolean("(2 > 3) || (5 >= 5)", &|v| v.parse().ok()), Some(true));
+    }
+}
