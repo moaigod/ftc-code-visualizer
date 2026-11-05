@@ -230,11 +230,6 @@ pub fn parse_java_program(source: &str) -> JavaProgram {
         }
         let Some(params_end) = match_java(&tokens, i + 1, "(", ")") else { i += 1; continue; };
         let mut body_open = params_end + 1;
-        while body_open < tokens.len()
-            && matches!(tokens[body_open].text.as_str(), "throws" | ",")
-        {
-            body_open += 1;
-        }
         // Skip a throws clause and its declared exception names.
         if tokens.get(body_open).is_some_and(|t| t.text == "throws") {
             body_open += 1;
