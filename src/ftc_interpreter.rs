@@ -318,3 +318,137 @@ fn strip_comments(source: &str) -> String {
     }
     out
 }
+
+/// A sampled field-space route extracted from common PedroPathing path builders.
+/// This is a visualizer-side subset, not a general Java virtual machine.
+#[derive(Clone, Debug, Default)]
+pub struct AutonomousPlan {
+    pub start_pose: Option<(f32, f32, f32)>,
+    pub waypoints: Vec<(f32, f32)>,
+    pub diagnostics: Vec<String>,
+}
+
+/// Extracts common PedroPathing Pose, BezierLine, and BezierCurve declarations.
+pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
+    let clean = strip_comments(source);
+    let tokens = tokenize(&clean);
+    let mut plan = AutonomousPlan::default();
+
+    // PedroPathing Pose(x, y, heading) uses radians for heading.
+    for i in 0..tokens.len().saturating_sub(2) {
+        if !tokens[i].ident_is("Pose") || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) { continue; }
+        let Some(end) = matching(&tokens, i + 1, "(", ")") else { continue; };
+        let args = split_arguments(&tokens[i + 2..end]);
+        if args.len() >= 2 {
+            if let (Some(x), Some(y)) = (
+                resolve_number(source, &tokens_to_text(args[0])),
+                resolve_number(source, &tokens_to_text(args[1])),
+            ) {
+                let heading = args.get(2).and_then(|arg| resolve_angle(source, arg)).unwrap_or(0.0);
+                plan.start_pose = Some((x, y, heading));
+                break;
+            }
+        }
+    }
+
+    // Each Bezier path contributes a series of points. Sampling the curve
+    // preserves its shape for the visualizer's follower instead of connecting
+    // only the endpoints with a straight line.
+    for i in 0..tokens.len().saturating_sub(2) {
+        let is_line = tokens[i].ident_is("BezierLine");
+        let is_curve = tokens[i].ident_is("BezierCurve");
+        if !(is_line || is_curve) || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) { continue; }
+        let Some(end) = matching(&tokens, i + 1, "(", ")") else { continue; };
+        let body = &tokens[i + 2..end];
+        let mut points = Vec::new();
+        let mut p = 0;
+        while p + 2 < body.len() {
+            if body[p].ident_is("Point") && body[p + 1].punct("(") {
+                if let Some(point_end) = matching(body, p + 1, "(", ")") {
+                    let args = split_arguments(&body[p + 2..point_end]);
+                    if args.len() >= 2 {
+                        let x = resolve_number(source, &tokens_to_text(args[0]));
+                        let y = resolve_number(source, &tokens_to_text(args[1]));
+                        if let (Some(x), Some(y)) = (x, y) {
+                            points.push((x, y));
+                        }
+                    }
+                    p = point_end;
+                }
+            }
+            p += 1;
+        }
+        if points.len() >= 2 {
+            let samples = if is_line { 12 } else { 24 };
+            for step in 0..=samples {
+                let t = step as f32 / samples as f32;
+                let point = if points.len() == 2 {
+                    (points[0].0 * (1.0 - t) + points[1].0 * t,
+                     points[0].1 * (1.0 - t) + points[1].1 * t)
+                } else if points.len() == 3 {
+                    let u = 1.0 - t;
+                    (u*u*points[0].0 + 2.0*u*t*points[1].0 + t*t*points[2].0,
+                     u*u*points[0].1 + 2.0*u*t*points[1].1 + t*t*points[2].1)
+                } else {
+                    let u = 1.0 - t;
+                    (u*u*u*points[0].0 + 3.0*u*u*t*points[1].0 + 3.0*u*t*t*points[2].0 + t*t*t*points[3].0,
+                     u*u*u*points[0].1 + 3.0*u*u*t*points[1].1 + 3.0*u*t*t*points[2].1 + t*t*t*points[3].1)
+                };
+                if plan.waypoints.last().is_none_or(|last| {
+                    (last.0 - point.0).hypot(last.1 - point.1) > 0.05
+                }) {
+                    plan.waypoints.push(point);
+                }
+            }
+        } else {
+            plan.diagnostics.push(format!("Could not read control points for { }.", if is_line { "BezierLine" } else { "BezierCurve" }));
+        }
+    }
+
+    if let Some((x, y, _)) = plan.start_pose {
+        if plan.waypoints.first().is_some_and(|p| (p.0-x).hypot(p.1-y) < 0.5) {
+            plan.waypoints.remove(0);
+        }
+    }
+    if plan.waypoints.is_empty() {
+        plan.diagnostics.push("No supported PedroPathing BezierLine/BezierCurve paths were found. The selected autonomous cannot be driven yet.".to_owned());
+    }
+    if !clean.contains("followPath") && !clean.contains("followPath(") {
+        plan.diagnostics.push("No follower.followPath(...) call was detected; route extraction is preview-only until a supported start call is added.".to_owned());
+    }
+    plan
+}
+
+fn split_arguments(tokens: &[Token]) -> Vec<&[Token]> {
+    let mut args = Vec::new();
+    let mut start = 0;
+    let mut depth = 0_i32;
+    for (i, token) in tokens.iter().enumerate() {
+        if token.punct("(") || token.punct("[") { depth += 1; }
+        else if token.punct(")") || token.punct("]") { depth -= 1; }
+        else if token.punct(",") && depth == 0 {
+            args.push(&tokens[start..i]);
+            start = i + 1;
+        }
+    }
+    if start < tokens.len() { args.push(&tokens[start..]); }
+    args
+}
+
+fn tokens_to_text(tokens: &[Token]) -> String {
+    tokens.iter().map(|t| t.text.as_str()).collect::<String>()
+}
+
+fn resolve_angle(source: &str, tokens: &[Token]) -> Option<f32> {
+    let expression = tokens_to_text(tokens);
+    if expression.contains("toRadians") {
+        let start = expression.find("toRadians")? + "toRadians".len();
+        let inner = expression[start..].trim_start_matches('(').trim_end_matches(')');
+        return resolve_number(source, inner).map(f32::to_radians);
+    }
+    if expression.contains("PI") {
+        if expression.contains("PI/2") || expression.contains("PI / 2") { return Some(std::f32::consts::FRAC_PI_2); }
+        if expression.contains("PI") { return Some(std::f32::consts::PI); }
+    }
+    resolve_number(source, &expression)
+}
