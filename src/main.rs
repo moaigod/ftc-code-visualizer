@@ -1,6 +1,7 @@
 mod app;
 mod importer;
 mod ftc_interpreter;
+mod java_interpreter;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
