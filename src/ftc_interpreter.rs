@@ -491,61 +491,124 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     // Interpret the sequential command in source order. Waits and mechanism
     // commands are attached to the path that immediately precedes them.
     let method_actions = extract_instant_method_actions(source, &tokens);
-    let sequential_args = find_sequential_arguments(&tokens);
+    let command_tree = crate::java_interpreter::parse_autonomous_command_tree(source);
     let mut path_segments: Vec<AutonomousPathSegment> = Vec::new();
     let mut startup_actions = Vec::new();
     let mut path_seen = false;
-    for arg in sequential_args {
-        if arg.first().is_some_and(|token| token.ident_is("waitMs")) {
-            if let Some(segment) = path_segments.last_mut() {
-                if arg.get(1).is_some_and(|token| token.punct("(")) {
-                    if let Some(end) = matching(arg, 1, "(", ")") {
-                        segment.wait_after_ms = resolve_number(source, &tokens_to_text(&arg[2..end]))
-                            .unwrap_or(0.0).max(0.0) as u64;
+
+    fn apply_command_node(
+        node: &crate::java_interpreter::CommandNode,
+        source: &str,
+        named_paths: &[(String, Vec<(f32, f32)>, Vec<Option<f32>>)],
+        method_actions: &[(String, Vec<AutonomousMechanismAction>)],
+        path_segments: &mut Vec<AutonomousPathSegment>,
+        startup_actions: &mut Vec<AutonomousMechanismAction>,
+        path_seen: &mut bool,
+        parallel_group: bool,
+    ) {
+        use crate::java_interpreter::CommandNode;
+        match node {
+            CommandNode::Group { kind, children } => {
+                let is_parallel = kind == "parallel";
+                if is_parallel {
+                    // Parallel children start together. A path child is not
+                    // expected alongside a wait in the common FTC command API;
+                    // mechanism actions are invoked at group start and the
+                    // group duration is the longest child wait.
+                    let mut longest_wait = 0_u64;
+                    for child in children {
+                        if let CommandNode::Call { name, args } = child {
+                            if name == "waitMs" {
+                                if let Some(ms) = args.first().and_then(|v| resolve_number(source, v)) {
+                                    longest_wait = longest_wait.max(ms.max(0.0) as u64);
+                                }
+                            } else if name == "follow" {
+                                let path_name = args.get(1).and_then(|arg| {
+                                    let trimmed = arg.trim();
+                                    let open = trimmed.find('(')?;
+                                    trimmed[..open].trim().rsplit('.').next()
+                                });
+                                if let Some((_, points, headings)) = path_name.and_then(|n|
+                                    named_paths.iter().find(|(path, _, _)| path == n)
+                                ) {
+                                    *path_seen = true;
+                                    path_segments.push(AutonomousPathSegment {
+                                        waypoints: points.clone(),
+                                        headings: headings.clone(),
+                                        wait_after_ms: longest_wait,
+                                        actions_after: Vec::new(),
+                                    });
+                                }
+                            } else {
+                                attach_command_action(name, method_actions, path_segments, startup_actions, *path_seen);
+                            }
+                        } else {
+                            apply_command_node(child, source, named_paths, method_actions,
+                                path_segments, startup_actions, path_seen, true);
+                        }
+                    }
+                    if let Some(segment) = path_segments.last_mut().filter(|_| *path_seen) {
+                        segment.wait_after_ms = segment.wait_after_ms.max(longest_wait);
+                    }
+                } else {
+                    for child in children {
+                        apply_command_node(child, source, named_paths, method_actions,
+                            path_segments, startup_actions, path_seen, parallel_group);
                     }
                 }
             }
-            continue;
-        }
-
-        let is_follow = arg.iter().any(|token| token.ident_is("follow"));
-        if is_follow {
-            path_seen = true;
-            let path_name = arg.iter().enumerate().find_map(|(i, token)| {
-                if token.ident_is("follow") {
-                    arg[i + 1..].windows(2).find_map(|pair| {
-                        if pair[0].ident().is_some() && pair[1].punct("(") {
-                            pair[0].ident()
-                        } else { None }
-                    })
-                } else { None }
-            });
-            if let Some((_, points, headings)) = path_name.and_then(|name|
-                named_paths.iter().find(|(path, _, _)| path == name)
-            ) {
-                path_segments.push(AutonomousPathSegment {
-                    waypoints: points.clone(),
-                    headings: headings.clone(),
-                    wait_after_ms: 0,
-                    actions_after: Vec::new(),
+            CommandNode::Call { name, args } if name == "follow" => {
+                *path_seen = true;
+                let path_name = args.get(1).and_then(|arg| {
+                    let trimmed = arg.trim();
+                    let open = trimmed.find('(')?;
+                    trimmed[..open].trim().rsplit('.').next()
                 });
-            }
-            continue;
-        }
-
-        if let Some(open) = arg.iter().position(|token| token.punct("(")) {
-            if open == 0 { continue; }
-            let method_name = arg[open - 1].ident().unwrap_or("");
-            if let Some(actions) = method_actions.iter().find(|(name, _)| name == method_name).map(|(_, actions)| actions) {
-                if let Some(segment) = path_segments.last_mut().filter(|_| path_seen) {
-                    segment.actions_after.extend(actions.clone());
-                } else {
-                    startup_actions.extend(actions.clone());
+                if let Some((_, points, headings)) = path_name.and_then(|n|
+                    named_paths.iter().find(|(path, _, _)| path == n)
+                ) {
+                    path_segments.push(AutonomousPathSegment {
+                        waypoints: points.clone(),
+                        headings: headings.clone(),
+                        wait_after_ms: 0,
+                        actions_after: Vec::new(),
+                    });
                 }
+            }
+            CommandNode::Call { name, args } if name == "waitMs" => {
+                if let Some(ms) = args.first().and_then(|v| resolve_number(source, v)) {
+                    if let Some(segment) = path_segments.last_mut() {
+                        segment.wait_after_ms = segment.wait_after_ms.saturating_add(ms.max(0.0) as u64);
+                    }
+                }
+            }
+            CommandNode::Call { name, .. } => {
+                attach_command_action(name, method_actions, path_segments, startup_actions, *path_seen);
+            }
+            CommandNode::Raw(_) => {}
+        }
+    }
+
+    fn attach_command_action(
+        name: &str,
+        method_actions: &[(String, Vec<AutonomousMechanismAction>)],
+        path_segments: &mut Vec<AutonomousPathSegment>,
+        startup_actions: &mut Vec<AutonomousMechanismAction>,
+        path_seen: bool,
+    ) {
+        if let Some(actions) = method_actions.iter().find(|(method, _)| method == name).map(|(_, actions)| actions) {
+            if let Some(segment) = path_segments.last_mut().filter(|_| path_seen) {
+                segment.actions_after.extend(actions.clone());
+            } else {
+                startup_actions.extend(actions.clone());
             }
         }
     }
 
+    if let Some(tree) = command_tree {
+        apply_command_node(&tree, source, &named_paths, &method_actions,
+            &mut path_segments, &mut startup_actions, &mut path_seen, false);
+    }
     if !path_segments.is_empty() {
         plan.path_found = true;
         plan.waypoints.clear();
