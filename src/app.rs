@@ -834,16 +834,28 @@ impl VisualizerApp {
                         .filter(|element| element.scored && element.hive == Some(side))
                         .count()
                         .max(1);
+                    // The hives are elevated, so released elements fall out
+                    // toward the field rather than bursting in every direction.
+                    // Red spills toward the bottom edge; Blue spills toward the top.
+                    let fieldward_y = match side {
+                        HiveSide::Red => -1.0_f32,
+                        HiveSide::Blue => 1.0_f32,
+                    };
                     let phase = (self.red_hive_tip_count + self.blue_hive_tip_count) as f32 * 0.37;
                     let mut released_index = 0usize;
                     for element in &mut self.field_pollen {
                         if element.scored && element.hive == Some(side) {
-                            let angle = phase + std::f32::consts::TAU
-                                * released_index as f32 / released_count as f32;
-                            let speed = 13.0 + (released_index % 4) as f32 * 2.8;
+                            let spread = if released_count > 1 {
+                                (released_index as f32 / (released_count - 1) as f32) * 2.0 - 1.0
+                            } else {
+                                0.0
+                            };
+                            let wobble = (phase + released_index as f32 * 1.73).sin() * 0.18;
+                            let lateral = (spread + wobble) * (24.0 + (released_index % 3) as f32 * 5.0);
+                            let fall_speed = 58.0 + (released_index % 4) as f32 * 7.0;
                             element.scored = false;
-                            element.vx = angle.cos() * speed;
-                            element.vy = angle.sin() * speed;
+                            element.vx = lateral;
+                            element.vy = fieldward_y * fall_speed;
                             released_index += 1;
                         }
                     }
