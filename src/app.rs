@@ -914,33 +914,25 @@ impl VisualizerApp {
             } else {
                 if let Some(segment) = self.autonomous_segments.get(self.autonomous_segment_index).cloned() {
                     if !self.autonomous_post_actions_applied {
-                        let conditions_ready = segment.actions_after.iter().all(|action| {
-                            action.minimum_flywheel_velocity
-                                .is_none_or(|minimum| self.flywheel_velocity >= minimum)
-                        });
-                        if conditions_ready {
-                            for action in &segment.actions_after {
-                                let value = action.value.unwrap_or(0.0);
-                                match action.role {
-                                    crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
-                                    crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => self.feeder_running = value > 0.0,
-                                    crate::ftc_interpreter::MotorRole::Outtake if action.method == "setVelocity" => {
-                                        self.flywheel_target_velocity = self.flywheel_target_velocity.max(value.max(0.0));
-                                    }
-                                    _ => {}
+                        // Java instant(...) commands evaluate their if-conditions
+                        // once when invoked. A failed condition is not retried
+                        // while a parallel wait is running.
+                        for action in &segment.actions_after {
+                            let condition_passes = action.minimum_flywheel_velocity
+                                .is_none_or(|minimum| self.flywheel_velocity >= minimum);
+                            if !condition_passes { continue; }
+                            let value = action.value.unwrap_or(0.0);
+                            match action.role {
+                                crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
+                                crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => self.feeder_running = value > 0.0,
+                                crate::ftc_interpreter::MotorRole::Outtake if action.method == "setVelocity" => {
+                                    self.flywheel_target_velocity = self.flywheel_target_velocity.max(value.max(0.0));
                                 }
+                                _ => {}
                             }
-                            self.autonomous_post_actions_applied = true;
-                            self.autonomous_wait_remaining = segment.wait_after_ms as f32 / 1000.0;
-                        } else {
-                            self.autonomous_status = format!(
-                                "Waiting for flywheel to reach {:.0} ticks/s before the next autonomous step.",
-                                segment.actions_after.iter()
-                                    .filter_map(|action| action.minimum_flywheel_velocity)
-                                    .fold(0.0_f32, f32::max)
-                            );
-                            ctx.request_repaint();
                         }
+                        self.autonomous_post_actions_applied = true;
+                        self.autonomous_wait_remaining = segment.wait_after_ms as f32 / 1000.0;
                     }
 
                     if self.autonomous_post_actions_applied {
