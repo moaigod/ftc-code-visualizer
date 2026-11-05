@@ -830,10 +830,6 @@ impl VisualizerApp {
                     }
                     // The scoring pieces are released from the hive and
                     // scatter outward instead of remaining frozen in the cell.
-                    let scatter_center = match side {
-                        HiveSide::Red => hive_pair_centers(HiveSide::Red, !self.red_hive_tipped).1,
-                        HiveSide::Blue => hive_pair_centers(HiveSide::Blue, !self.blue_hive_tipped).1,
-                    };
                     let released_count = self.field_pollen.iter()
                         .filter(|element| element.scored && element.hive == Some(side))
                         .count()
@@ -851,7 +847,6 @@ impl VisualizerApp {
                             released_index += 1;
                         }
                     }
-                    let _ = scatter_center;
                     self.pollen_status = format!("{} hive tipped. Scoring elements spilled out and scattered.", if side == HiveSide::Red { "Red" } else { "Blue" });
                 } else {
                     self.pollen_status = format!("{} hive: {:.1}/8.0 load units toward tipping.", if side == HiveSide::Red { "Red" } else { "Blue" }, load);
@@ -1541,7 +1536,7 @@ fn collide_element_with_robot(
         } else if local_x.abs() > local_y.abs() {
             (local_x.signum(), 0.0)
         } else {
-            (0.0, local_y.signum().copysign(1.0))
+            (0.0, 1.0)
         };
         let nx = local_nx * heading.cos() + local_ny * heading.sin();
         let ny = local_nx * heading.sin() - local_ny * heading.cos();
