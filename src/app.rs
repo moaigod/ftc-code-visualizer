@@ -837,9 +837,17 @@ impl VisualizerApp {
                     // The hives are elevated, so released elements fall out
                     // toward the field rather than bursting in every direction.
                     // Red spills toward the bottom edge; Blue spills toward the top.
-                    let fieldward_y = match side {
-                        HiveSide::Red => -1.0_f32,
-                        HiveSide::Blue => 1.0_f32,
+                    let tipped_cell_center = match side {
+                        HiveSide::Red => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).1,
+                        HiveSide::Blue => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).1,
+                    };
+                    // Field Y increases toward the top edge. Send the spill
+                    // away from the field center based on the actual tipped cell,
+                    // not the alliance color.
+                    let fieldward_y = if tipped_cell_center.1 >= FIELD_SIZE_IN * 0.5 {
+                        1.0_f32
+                    } else {
+                        -1.0_f32
                     };
                     let phase = (self.red_hive_tip_count + self.blue_hive_tip_count) as f32 * 0.37;
                     let mut released_index = 0usize;
