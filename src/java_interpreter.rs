@@ -604,7 +604,7 @@ fn strip_outer_parentheses(mut expression: &str) -> &str {
                 else if b == quote { quote = 0; }
                 continue;
             }
-            if b == b'"' || b == b'\\\\'' { quote = b; continue; }
+            if b == b'"' || b == b'\'' { quote = b; continue; }
             if b == b'(' { depth += 1; }
             if b == b')' {
                 depth -= 1;
@@ -631,7 +631,7 @@ fn split_boolean_operator<'a>(expression: &'a str, operator: &str) -> Option<(&'
             else if b == quote { quote = 0; }
             i += 1; continue;
         }
-        if b == b'"' || b == b'\\\\'' { quote = b; i += 1; continue; }
+        if b == b'"' || b == b'\'' { quote = b; i += 1; continue; }
         if b == b'(' { depth += 1; i += 1; continue; }
         if b == b')' { depth -= 1; i += 1; continue; }
         if depth == 0 && &bytes[i..i+op.len()] == op {
