@@ -989,8 +989,8 @@ fn hive_cell_bounds(center: (f32, f32)) -> (f32, f32, f32, f32) {
 
 fn point_in_scoring_cone(point: (f32, f32), center: (f32, f32), side: HiveSide) -> bool {
     let (axis_x, axis_y) = match side {
-        HiveSide::Red => (0.0_f32, 1.0_f32),
-        HiveSide::Blue => (0.0_f32, -1.0_f32),
+        HiveSide::Red => (0.0_f32, -1.0_f32),
+        HiveSide::Blue => (0.0_f32, 1.0_f32),
     };
     let dx = point.0 - center.0;
     let dy = point.1 - center.1;
@@ -1004,8 +1004,8 @@ fn point_in_scoring_cone(point: (f32, f32), center: (f32, f32), side: HiveSide) 
 
 fn scoring_cone_polygon(center: (f32, f32), side: HiveSide) -> Vec<(f32, f32)> {
     let axis_angle = match side {
-        HiveSide::Red => std::f32::consts::FRAC_PI_2,
-        HiveSide::Blue => -std::f32::consts::FRAC_PI_2,
+        HiveSide::Red => -std::f32::consts::FRAC_PI_2,
+        HiveSide::Blue => std::f32::consts::FRAC_PI_2,
     };
     let half_angle = std::f32::consts::PI / 3.0;
     let mut points = vec![center];
