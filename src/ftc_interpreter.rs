@@ -794,7 +794,20 @@ fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(Strin
                 actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity, condition, wait_until, delay_before_ms: 0 });
             }
         }
-        if !actions.is_empty() { result.push((method.name.clone(), actions)); }
+        if !actions.is_empty() {
+            // Inline instant(() -> motor.setPower(...)) nodes are represented
+            // in the command tree by the name "instant", not by the enclosing
+            // Java method name. Keep the named entry for helper-method calls,
+            // and add the inline entry so sequential(waitUntil(...), instant(...))
+            // can actually enqueue the extracted motor action.
+            let contains_inline_instant = body.windows(2).any(|pair|
+                pair[0].ident_is("instant") && pair[1].punct("(")
+            );
+            result.push((method.name.clone(), actions.clone()));
+            if contains_inline_instant {
+                result.push(("instant".to_owned(), actions));
+            }
+        }
     }
     result
 }
