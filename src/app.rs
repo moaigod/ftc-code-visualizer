@@ -1685,24 +1685,102 @@ impl eframe::App for VisualizerApp {
                 });
             });
         });
-        egui::SidePanel::left("controls").resizable(true).default_width(320.0).show(ctx, |ui| {
+        egui::SidePanel::left("controls").resizable(true).default_width(290.0).show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("sidebar_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-            ui.heading("Robot"); ui.add_space(8.0); ui.label("Position (inches)");
+            ui.heading("OpMode");
+            if let Some(name) = &self.project_name {
+                ui.label(format!("Project: {name}"));
+                let mut clicked = None;
+                egui::ComboBox::from_id_salt("opmode_select")
+                    .selected_text(self.selected_op_mode
+                        .and_then(|i| self.op_modes.get(i))
+                        .map(|mode| format!("{} · {}", mode.kind, mode.name))
+                        .unwrap_or_else(|| "Select an OpMode".to_owned()))
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for (i, mode) in self.op_modes.iter().enumerate() {
+                            if ui.selectable_label(self.selected_op_mode == Some(i),
+                                format!("{} · {}", mode.kind, mode.name)).clicked() {
+                                clicked = Some(i);
+                            }
+                        }
+                    });
+                if let Some(i) = clicked {
+                    self.selected_op_mode = Some(i);
+                    self.show_source = true;
+                    self.autonomous_running = false;
+                    self.teleop_active = false;
+                    self.is_running = false;
+                }
+            } else {
+                ui.label("Import an FTC project to select an OpMode.");
+            }
+
+            let selected_kind = self.selected_op_mode
+                .and_then(|i| self.op_modes.get(i))
+                .map(|mode| mode.kind.clone());
+            let run_label = match selected_kind.as_deref() {
+                Some("Autonomous") if self.autonomous_running => "Stop Autonomous",
+                Some("Autonomous") => "Run Autonomous",
+                Some("TeleOp") if self.teleop_active => "Stop TeleOp",
+                Some("TeleOp") => "Run TeleOp",
+                _ => "Select an OpMode to run",
+            };
+            if ui.add_enabled(selected_kind.is_some(), egui::Button::new(run_label)).clicked() {
+                match selected_kind.as_deref() {
+                    Some("Autonomous") if self.autonomous_running => {
+                        self.autonomous_running = false;
+                        self.forward_velocity = 0.0;
+                        self.strafe_velocity = 0.0;
+                        self.turn_velocity = 0.0;
+                        self.autonomous_status = "Autonomous stopped.".to_owned();
+                    }
+                    Some("Autonomous") => {
+                        self.teleop_active = false;
+                        self.is_running = false;
+                        self.run_autonomous();
+                    }
+                    Some("TeleOp") if self.teleop_active => {
+                        self.teleop_active = false;
+                        self.stick_forward = 0.0;
+                        self.stick_strafe = 0.0;
+                        self.stick_turn = 0.0;
+                        self.forward_velocity = 0.0;
+                        self.strafe_velocity = 0.0;
+                        self.turn_velocity = 0.0;
+                    }
+                    Some("TeleOp") => {
+                        self.autonomous_running = false;
+                        self.is_running = false;
+                        self.reset();
+                        self.teleop_active = true;
+                        self.last_frame = Instant::now();
+                    }
+                    _ => {}
+                }
+            }
+            if let Some("Autonomous") = selected_kind.as_deref() {
+                ui.label(&self.autonomous_status);
+                if self.autonomous_running {
+                    ui.label(format!("Path point: {}/{}", self.autonomous_waypoint_index + 1, self.autonomous_waypoints.len()));
+                }
+            }
+
+            ui.separator();
+            ui.collapsing("Robot position", |ui| {
+                ui.label("Position (inches)");
             ui.add(egui::Slider::new(&mut self.robot_x, 0.0..=FIELD_SIZE_IN).text("X"));
             ui.add(egui::Slider::new(&mut self.robot_y, 0.0..=FIELD_SIZE_IN).text("Y"));
             ui.add(egui::Slider::new(&mut self.heading_deg, 0.0..=360.0).text("Heading").suffix("°"));
-            ui.add_space(12.0); ui.separator(); ui.heading("Simulation");
-            ui.add(egui::Slider::new(&mut self.drive_speed, 0.0..=60.0).text("Test speed").suffix(" in/s"));
-            ui.horizontal(|ui| {
-                if ui.button(if self.is_running { "Pause test" } else { "Run test" }).clicked() {
-                    self.is_running = !self.is_running; self.teleop_active = false; self.last_frame = Instant::now();
-                }
-                if ui.button("Reset").clicked() { self.reset(); }
             });
-            ui.add_space(12.0); ui.separator(); ui.heading("TeleOp controller");
+            ui.collapsing("Simulation settings", |ui| {
+                ui.add(egui::Slider::new(&mut self.drive_speed, 0.0..=60.0).text("Test speed").suffix(" in/s"));
+                if ui.button("Reset simulation").clicked() { self.reset(); }
+            });
+            ui.collapsing("TeleOp controller", |ui| {
             let controller_options = self.gamepad.as_ref().map(|gilrs| {
                 gilrs.gamepads()
                     .filter(|(_, gamepad)| gamepad.is_connected())
@@ -1733,11 +1811,6 @@ impl eframe::App for VisualizerApp {
             ui.label("Left stick: robot-relative forward / strafe");
             ui.label("Right stick X: rotate");
             ui.label("Mecanum wheel mixing with normalized wheel power and acceleration.");
-            if ui.button(if self.teleop_active { "Stop TeleOp" } else { "Start TeleOp" }).clicked() {
-                self.teleop_active = !self.teleop_active;
-                self.is_running = false;
-                self.last_frame = Instant::now();
-            }
             ui.label(format!("Input: F {:.2} · S {:.2} · R {:.2}",
                 self.stick_forward, self.stick_strafe, self.stick_turn));
             ui.collapsing("Drive motor power / velocity", |ui| {
@@ -1746,9 +1819,8 @@ impl eframe::App for VisualizerApp {
                         self.drive_wheel_power[i], self.drive_wheel_velocity[i]));
                 }
             });
-            ui.add_space(8.0);
-            ui.separator();
-            ui.heading("Pollen");
+            });
+            ui.collapsing("Pollen and mechanisms", |ui| {
             ui.strong(format!("Carrying: {}/4", self.carried_elements.len()));
             let pc=self.carried_elements.iter().filter(|item|item.kind==ElementKind::Pollen).count();
             let nc=self.carried_elements.iter().filter(|item|item.kind==ElementKind::Nectar).count();
@@ -1781,6 +1853,7 @@ impl eframe::App for VisualizerApp {
                 }
             });
             ui.label("Move the front intake close to a yellow pollen ball, then intake.");
+            });
             ui.collapsing("Detected gamepad button actions", |ui| {
                 let actions = self.detected_gamepad_actions();
                 if actions.is_empty() {
@@ -1851,42 +1924,17 @@ impl eframe::App for VisualizerApp {
             }
 
 
-            if let Some(index) = self.selected_op_mode {
-                if let Some(mode) = self.op_modes.get(index) {
-                    if mode.kind == "Autonomous" {
-                        ui.label("PedroPathing autonomous route execution");
-                        if ui.button(if self.autonomous_running { "Autonomous running…" } else { "Run Autonomous" }).clicked() {
-                            self.run_autonomous();
-                        }
-                        if self.autonomous_running && ui.button("Stop Autonomous").clicked() {
-                            self.autonomous_running = false;
-                            self.forward_velocity = 0.0;
-                            self.strafe_velocity = 0.0;
-                            self.autonomous_status = "Autonomous stopped.".to_owned();
-                        }
-                        ui.label(&self.autonomous_status);
-                        if self.autonomous_running {
-                            ui.label(format!("Path point: {}/{}", self.autonomous_waypoint_index + 1, self.autonomous_waypoints.len()));
-                        }
+            ui.add_space(12.0);
+            ui.collapsing("FTC project", |ui| {
+                if ui.button("Import FTC project folder").clicked() { self.import_project(); }
+                ui.label(&self.import_status);
+                if self.project_name.is_some() {
+                    ui.label(format!("{} OpModes detected", self.op_modes.len()));
+                    if self.op_modes.is_empty() {
+                        ui.label("No @TeleOp or @Autonomous classes were detected.");
                     }
                 }
-            }
-
-            ui.add_space(12.0); ui.separator(); ui.heading("Android Studio project");
-            if ui.button("Import FTC project folder").clicked() { self.import_project(); }
-            ui.label(&self.import_status);
-            if let Some(name) = &self.project_name {
-                ui.label(format!("Project: {name}")); ui.label("Detected OpModes:");
-                let mut clicked = None;
-                egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
-                    for (i, mode) in self.op_modes.iter().enumerate() {
-                        if ui.selectable_label(self.selected_op_mode == Some(i),
-                            format!("{} · {}", mode.kind, mode.name)).clicked() { clicked = Some(i); }
-                    }
-                });
-                if let Some(i) = clicked { self.selected_op_mode = Some(i); self.show_source = true; }
-                if self.op_modes.is_empty() { ui.label("No @TeleOp or @Autonomous classes were detected."); }
-            }
+            });
             ui.add_space(12.0); ui.separator(); ui.heading("Field status");
             ui.label("144 × 144 inches"); ui.label("Background: supplied field screenshot");
                 });
