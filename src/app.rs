@@ -83,6 +83,8 @@ pub struct VisualizerApp {
     flower_intake_cooldown: f32,
     intake_running: bool,
     feeder_running: bool,
+    intake_power: f32,
+    feeder_power: f32,
     flywheel_velocity: f32,
     flywheel_target_velocity: f32,
     ramp_angle_deg: f32,
@@ -136,6 +138,8 @@ impl Default for VisualizerApp {
             flower_intake_cooldown: 0.0,
             intake_running: false,
             feeder_running: false,
+            intake_power: 0.0,
+            feeder_power: 0.0,
             flywheel_velocity: 0.0,
             flywheel_target_velocity: 0.0,
             ramp_angle_deg: 35.0,
@@ -199,6 +203,8 @@ impl VisualizerApp {
         self.flower_intake_cooldown = 0.0;
         self.intake_running = false;
         self.feeder_running = false;
+        self.intake_power = 0.0;
+        self.feeder_power = 0.0;
         self.flywheel_velocity = 0.0;
         self.flywheel_target_velocity = 0.0;
         self.shot_cooldown = 0.0;
@@ -270,12 +276,20 @@ impl VisualizerApp {
         }
         self.intake_running = false;
         self.feeder_running = false;
+        self.intake_power = 0.0;
+        self.feeder_power = 0.0;
         self.flywheel_target_velocity = 0.0;
         for action in &plan.startup_actions {
             let value = action.value.unwrap_or(0.0);
             match action.role {
-                crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
-                crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => self.feeder_running = value > 0.0,
+                crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => {
+                    self.intake_power = value.abs().clamp(0.0, 1.0);
+                    self.intake_running = self.intake_power > 0.0;
+                }
+                crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => {
+                    self.feeder_power = value.abs().clamp(0.0, 1.0);
+                    self.feeder_running = self.feeder_power > 0.0;
+                }
                 crate::ftc_interpreter::MotorRole::Outtake if action.method == "setVelocity" => {
                     self.flywheel_target_velocity = self.flywheel_target_velocity.max(value.max(0.0));
                 }
@@ -390,8 +404,10 @@ impl VisualizerApp {
         let normalized = action.to_ascii_lowercase();
         if normalized.contains("intake") {
             self.intake_running = true;
+            self.intake_power = 1.0;
         } else if normalized.contains("feeder") {
             self.feeder_running = true;
+            self.feeder_power = 1.0;
             self.pollen_status = "Feeder activated by the selected OpMode.".to_owned();
         } else if normalized.contains("outtake") || normalized.contains("shooter") {
             let source = self.selected_op_mode.and_then(|i| self.op_modes.get(i)).map(|m| m.source.as_str()).unwrap_or("");
@@ -508,7 +524,14 @@ impl VisualizerApp {
         let vertical_speed=speed*angle.sin();
         self.pollen_projectile=Some(PollenProjectile{x:launch_x,y:launch_y,vx:launch.sin()*horizontal_speed,vy:launch.cos()*horizontal_speed,vz:vertical_speed,z:0.0,elapsed:0.0,kind,hive:cargo.hive,can_score_red,can_score_blue});
         let loss=(0.30+(target/3000.0)*0.20).clamp(0.30,0.55);
-        self.flywheel_velocity*=1.0-loss; self.shot_cooldown=0.28;
+        self.flywheel_velocity*=1.0-loss;
+        // The slower of the intake and feeder limits the rate at which the
+        // next element can reach the shooter. Ramp angle changes trajectory,
+        // not the mechanism's feed cadence.
+        let intake_rate = if has_intake { self.intake_power } else { 1.0 };
+        let feeder_rate = if has_feeder { self.feeder_power } else { 1.0 };
+        let feed_rate = intake_rate.min(feeder_rate).clamp(0.1, 1.0);
+        self.shot_cooldown = 0.28 / feed_rate;
         let name=match kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
         self.pollen_status=format!("{name} fired FIFO. {} element(s) remain.",self.carried_elements.len());
     }
@@ -926,7 +949,7 @@ impl VisualizerApp {
         self.intake_cycle_timer = (self.intake_cycle_timer - dt).max(0.0);
         if self.intake_running && self.intake_cycle_timer <= 0.0 {
             self.intake_pollen();
-            self.intake_cycle_timer = 0.4;
+            self.intake_cycle_timer = 0.4 / self.intake_power.clamp(0.1, 1.0);
         } else if !self.intake_running {
             self.intake_cycle_timer = 0.0;
         }
@@ -1031,8 +1054,14 @@ impl VisualizerApp {
 
                             let value = action.value.unwrap_or(0.0);
                             match action.role {
-                                crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => self.intake_running = value > 0.0,
-                                crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => self.feeder_running = value > 0.0,
+                                crate::ftc_interpreter::MotorRole::Intake if action.method == "setPower" => {
+                                    self.intake_power = value.abs().clamp(0.0, 1.0);
+                                    self.intake_running = self.intake_power > 0.0;
+                                }
+                                crate::ftc_interpreter::MotorRole::Feeder if action.method == "setPower" => {
+                                    self.feeder_power = value.abs().clamp(0.0, 1.0);
+                                    self.feeder_running = self.feeder_power > 0.0;
+                                }
                                 crate::ftc_interpreter::MotorRole::Outtake if action.method == "setVelocity" => {
                                     self.flywheel_target_velocity = self.flywheel_target_velocity.max(value.max(0.0));
                                 }
@@ -1586,6 +1615,8 @@ impl eframe::App for VisualizerApp {
         if self.teleop_active {
             self.intake_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("intake")));
             self.feeder_running = pressed_buttons.iter().any(|button| actions.iter().any(|(mapped, action)| mapped == button && action.contains("feeder")));
+            self.intake_power = if self.intake_running { 1.0 } else { 0.0 };
+            self.feeder_power = if self.feeder_running { 1.0 } else { 0.0 };
         }
         let newly_pressed = pressed_buttons.iter()
             .filter(|button| !self.previous_gamepad_buttons.contains(button))
