@@ -68,6 +68,10 @@ pub struct VisualizerApp {
     robot_x: f32, robot_y: f32, heading_deg: f32, drive_speed: f32,
     is_running: bool, teleop_active: bool,
     last_frame: Instant, physics_accumulator: f32, elapsed_seconds: f32,
+    physics_substeps: u8,
+    surface_friction: f32,
+    element_friction: f32,
+    element_restitution: f32,
     field_texture: Option<TextureHandle>, field_load_attempted: bool,
     project_name: Option<String>, op_modes: Vec<OpModeInfo>,
     selected_op_mode: Option<usize>, show_source: bool, import_status: String,
@@ -134,6 +138,10 @@ impl Default for VisualizerApp {
             robot_x: 24.0, robot_y: 24.0, heading_deg: 0.0, drive_speed: MAX_SPEED_IN_S,
             is_running: false, teleop_active: false,
             last_frame: Instant::now(), physics_accumulator: 0.0, elapsed_seconds: 0.0,
+            physics_substeps: 2,
+            surface_friction: 0.95,
+            element_friction: 0.72,
+            element_restitution: 0.16,
             field_texture: None, field_load_attempted: false, project_name: None,
             op_modes: Vec::new(), selected_op_mode: None, show_source: false,
             import_status: "No FTC project loaded.".to_owned(),
@@ -648,8 +656,10 @@ impl VisualizerApp {
         // Mecanum inverse kinematics. Lateral motion has lower effective
         // traction than forward motion because of the roller contact geometry.
         let w = self.drive_wheel_velocity;
-        let wheel_forward = (w[0] + w[1] + w[2] + w[3]) * 0.25;
-        let wheel_strafe = (w[0] - w[1] - w[2] + w[3]) * 0.25;
+        let wheel_forward = (w[0] + w[1] + w[2] + w[3]) * 0.25
+            * self.surface_friction.clamp(0.2, 1.2);
+        let wheel_strafe = (w[0] - w[1] - w[2] + w[3]) * 0.25
+            * self.surface_friction.clamp(0.2, 1.2);
         let wheel_turn = (w[0] - w[1] + w[2] - w[3]) * 0.25;
         self.forward_velocity = wheel_forward * 0.96;
         self.strafe_velocity = wheel_strafe * 0.84;
@@ -687,9 +697,12 @@ impl VisualizerApp {
         // round dynamic bodies. The field perimeter is represented by fixed walls.
         let mut world = PhysicsWorld::new();
         world.gravity = Vector::new(0.0, 0.0);
-        world.integration_parameters.dt = dt;
+        // Rapier receives additional internal substeps for fast contacts.
+        // This is separate from the fixed 120 Hz game/FTC update cadence.
+        let substeps = self.physics_substeps.clamp(1, 8) as usize;
+        world.integration_parameters.dt = dt / substeps as f32;
         world.integration_parameters.num_solver_iterations = 8;
-        world.integration_parameters.max_ccd_substeps = 4;
+        world.integration_parameters.max_ccd_substeps = 8;
 
         let half_field = FIELD_SIZE_IN * 0.5;
         let wall_thickness = 0.5;
@@ -702,7 +715,7 @@ impl VisualizerApp {
             world.insert_collider(
                 ColliderBuilder::cuboid(half_x, half_y)
                     .translation(Vector::new(x, y))
-                    .friction(0.95),
+                    .friction(self.surface_friction.clamp(0.2, 1.2)),
                 None,
             );
         }
@@ -723,7 +736,7 @@ impl VisualizerApp {
                 .ccd_enabled(true),
             ColliderBuilder::cuboid(9.0, 9.0)
                 .density(0.0556)
-                .friction(0.95)
+                .friction(self.surface_friction.clamp(0.2, 1.2))
                 .restitution(0.025),
         );
 
@@ -771,13 +784,15 @@ impl VisualizerApp {
                     .ccd_enabled(true),
                 ColliderBuilder::ball(element.radius)
                     .density(0.02)
-                    .friction(0.72)
-                    .restitution(0.16),
+                    .friction(self.element_friction.clamp(0.1, 1.2))
+                    .restitution(self.element_restitution.clamp(0.0, 0.8)),
             );
             element_bodies.push((index, body));
         }
 
-        world.step();
+        for _ in 0..substeps {
+            world.step();
+        }
 
         // Read the solved chassis pose and velocity back into the FTC simulator.
         let robot = &world.bodies[robot_body];
@@ -2094,6 +2109,13 @@ impl eframe::App for VisualizerApp {
                 ui.label("Fixed physics timestep: 120 Hz");
                 ui.label("18 × 18 in rigid-body chassis with momentum and contact friction.");
                 ui.label("Loose game elements use dynamic rigid bodies and continuous collision detection.");
+                ui.separator();
+                ui.strong("Environment and contact tuning");
+                ui.add(egui::Slider::new(&mut self.physics_substeps, 1..=8).text("Rapier substeps"));
+                ui.add(egui::Slider::new(&mut self.surface_friction, 0.2..=1.2).text("Field traction"));
+                ui.add(egui::Slider::new(&mut self.element_friction, 0.1..=1.2).text("Game-piece friction"));
+                ui.add(egui::Slider::new(&mut self.element_restitution, 0.0..=0.8).text("Game-piece bounce"));
+                ui.label("Higher substeps improve fast-contact stability at additional CPU cost. Material settings persist across resets.");
                 ui.add(egui::Slider::new(&mut self.drive_speed, 0.0..=60.0).text("Test speed").suffix(" in/s"));
                 if ui.button("Reset simulation").clicked() { self.reset(); }
             });
