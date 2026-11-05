@@ -525,13 +525,14 @@ impl VisualizerApp {
         self.pollen_projectile=Some(PollenProjectile{x:launch_x,y:launch_y,vx:launch.sin()*horizontal_speed,vy:launch.cos()*horizontal_speed,vz:vertical_speed,z:0.0,elapsed:0.0,kind,hive:cargo.hive,can_score_red,can_score_blue});
         let loss=(0.30+(target/3000.0)*0.20).clamp(0.30,0.55);
         self.flywheel_velocity*=1.0-loss;
-        // The slower of the intake and feeder limits the rate at which the
-        // next element can reach the shooter. Ramp angle changes trajectory,
-        // not the mechanism's feed cadence.
+        // Both mechanisms contribute to the feed rate. Averaging their
+        // normalized powers avoids letting the slower motor completely
+        // bottleneck the shooter, while increasing either motor's power
+        // increases the overall firing cadence. Ramp angle only affects flight.
         let intake_rate = if has_intake { self.intake_power } else { 1.0 };
         let feeder_rate = if has_feeder { self.feeder_power } else { 1.0 };
-        let feed_rate = intake_rate.min(feeder_rate).clamp(0.1, 1.0);
-        self.shot_cooldown = 0.28 / feed_rate;
+        let feed_rate = ((intake_rate + feeder_rate) * 0.5).clamp(0.1, 1.0);
+        self.shot_cooldown = 0.16 / feed_rate;
         let name=match kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
         self.pollen_status=format!("{name} fired FIFO. {} element(s) remain.",self.carried_elements.len());
     }
