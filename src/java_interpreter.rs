@@ -178,6 +178,8 @@ pub struct JavaMethod {
     pub name: String,
     pub parameters: Vec<String>,
     pub body: JavaStatement,
+    /// Structured blocks nested inside lambdas and other expressions.
+    pub nested_blocks: Vec<JavaStatement>,
     /// Original source inside the method braces. Kept for expression evaluation
     /// and for the FTC-specific hardware interpreter.
     pub body_source: String,
@@ -257,11 +259,24 @@ pub fn parse_java_program(source: &str) -> JavaProgram {
         let parameters = split_java_args(&tokens[i + 2..params_end], &clean);
         let body_source = clean[tokens[body_open].end..tokens[body_end].start].to_owned();
         let body = parse_java_block(&tokens, body_open, body_end, &clean);
+        let mut nested_blocks = Vec::new();
+        let mut block_at = body_open + 1;
+        while block_at < body_end {
+            if tokens[block_at].text == "{" {
+                if let Some(block_end) = match_java(&tokens, block_at, "{", "}") {
+                    nested_blocks.push(parse_java_block(&tokens, block_at, block_end, &clean));
+                    block_at = block_end + 1;
+                    continue;
+                }
+            }
+            block_at += 1;
+        }
         methods.push(JavaMethod {
             return_type,
             name: tokens[i].text.clone(),
             parameters,
             body,
+            nested_blocks,
             body_source,
         });
         i = body_end + 1;
@@ -471,6 +486,9 @@ mod java_ast_tests {
         assert!(method.body_source.contains("getVelocity"));
         assert!(matches!(&method.body, JavaStatement::Block(statements)
             if matches!(statements.first(), Some(JavaStatement::Return(Some(_))))));
+        assert!(method.nested_blocks.iter().any(|block|
+            matches!(block, JavaStatement::Block(statements)
+                if statements.iter().any(|statement| matches!(statement, JavaStatement::If { .. })))));
     }
 
     #[test]
