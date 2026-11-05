@@ -57,6 +57,8 @@ struct PollenProjectile {
     elapsed: f32,
     kind: ElementKind,
     hive: Option<HiveSide>,
+    can_score_red: bool,
+    can_score_blue: bool,
 }
 
 pub struct VisualizerApp {
@@ -328,16 +330,26 @@ impl VisualizerApp {
         if target<=0.0 {self.pollen_status="No positive setVelocity() target was resolved from the selected OpMode.".to_owned();return;}
         let min=(target*0.25).max(100.0);
         if self.flywheel_velocity<min {self.pollen_status=format!("Flywheel spinning up: {:.0}/{:.0} ticks/s (shots become available at {:.0}).",self.flywheel_velocity,target,min);return;}
+        let heading=self.heading_deg.to_radians();
+        let launch_x=self.robot_x+heading.sin()*(ROBOT_SIZE_IN*0.5+1.0);
+        let launch_y=self.robot_y+heading.cos()*(ROBOT_SIZE_IN*0.5+1.0);
+        let red_center=hive_pair_centers(HiveSide::Red,self.red_hive_tipped).0;
+        let blue_center=hive_pair_centers(HiveSide::Blue,self.blue_hive_tipped).0;
+        let can_score_red=point_in_scoring_cone((launch_x,launch_y),red_center,HiveSide::Red);
+        let can_score_blue=point_in_scoring_cone((launch_x,launch_y),blue_center,HiveSide::Blue);
+        if !can_score_red && !can_score_blue {
+            self.pollen_status="Shot blocked: the robot must be inside a visible scoring cone.".to_owned();
+            return;
+        }
         // FIFO: the first collected element is the first one launched.
         let cargo=self.carried_elements.remove(0);
         let kind=cargo.kind;
         const SPREAD:[f32;7]=[-2.2,1.1,2.0,-0.8,0.4,-1.5,1.6];
         let spread=SPREAD[self.shot_sequence as usize%SPREAD.len()].to_radians();
         self.shot_sequence=self.shot_sequence.wrapping_add(1);
-        let heading=self.heading_deg.to_radians();
         let launch=heading+spread;
         let speed=(self.flywheel_velocity*self.shooter_velocity_scale).clamp(3.0,100.0);
-        self.pollen_projectile=Some(PollenProjectile{x:self.robot_x+heading.sin()*(ROBOT_SIZE_IN*0.5+1.0),y:self.robot_y+heading.cos()*(ROBOT_SIZE_IN*0.5+1.0),vx:launch.sin()*speed,vy:launch.cos()*speed,elapsed:0.0,kind,hive:cargo.hive});
+        self.pollen_projectile=Some(PollenProjectile{x:launch_x,y:launch_y,vx:launch.sin()*speed,vy:launch.cos()*speed,elapsed:0.0,kind,hive:cargo.hive,can_score_red,can_score_blue});
         let loss=(0.30+(target/3000.0)*0.20).clamp(0.30,0.55);
         self.flywheel_velocity*=1.0-loss; self.shot_cooldown=0.28;
         let name=match kind {ElementKind::Pollen=>"Pollen",ElementKind::Nectar=>"Nectar"};
@@ -507,16 +519,12 @@ impl VisualizerApp {
             // fast projectile cannot skip over a hive between simulation frames.
             let red_untipped = hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0;
             let blue_untipped = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0;
-            // Split the field down the center (X = 72 inches).
-            // Red can score only in a scoring cell on the red half; Blue
-            // can score only in a scoring cell on the blue half. The shot
-            // may enter that cell from any direction.
-            let field_midline_x = FIELD_SIZE_IN * 0.5;
-            let in_red_cell = red_untipped.0 < field_midline_x
+            // A shot can score only in the alliance cone it was launched from.
+            let in_red_cell = projectile.can_score_red
                 && segment_intersects_hive_cell(
                     (previous_x, previous_y), (projectile.x, projectile.y), red_untipped,
                 );
-            let in_blue_cell = blue_untipped.0 >= field_midline_x
+            let in_blue_cell = projectile.can_score_blue
                 && segment_intersects_hive_cell(
                     (previous_x, previous_y), (projectile.x, projectile.y), blue_untipped,
                 );
@@ -781,6 +789,25 @@ impl VisualizerApp {
         }
         let scale = field.width() / FIELD_SIZE_IN;
 
+        // Draw the legal launch areas. Each 120-degree cone points from its
+        // active scoring cell toward the center of the field and expands to
+        // the field walls.
+        for (side_and_center in [
+            (HiveSide::Red, hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0, Color32::from_rgb(235, 65, 75)),
+            (HiveSide::Blue, hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0, Color32::from_rgb(65, 145, 255)),
+        ]) {
+            let (side, cone_center, color) = side_and_center;
+            let world_points = scoring_cone_polygon(cone_center, side);
+            let screen_points = world_points.into_iter().map(|(x, y)| {
+                Pos2::new(field.left() + x * scale, field.bottom() - y * scale)
+            }).collect::<Vec<_>>();
+            painter.add(egui::Shape::convex_polygon(
+                screen_points,
+                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 48),
+                Stroke::new(1.5, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 190)),
+            ));
+        }
+
         // Highlight the exact 22 x 14 inch rectangles used by the scoring
         // collision test. Only the currently untipped cell for each alliance
         // is scoreable; the paired tipped cell is intentionally not outlined.
@@ -959,6 +986,47 @@ fn hive_cell_bounds(center: (f32, f32)) -> (f32, f32, f32, f32) {
         max_y -= 1.0; // Top edge inset by one inch.
     }
     (min_x, max_x, min_y, max_y)
+}
+
+fn point_in_scoring_cone(point: (f32, f32), center: (f32, f32), side: HiveSide) -> bool {
+    let (axis_x, axis_y) = match side {
+        HiveSide::Red => (1.0_f32, 0.0_f32),
+        HiveSide::Blue => (-1.0_f32, 0.0_f32),
+    };
+    let dx = point.0 - center.0;
+    let dy = point.1 - center.1;
+    let forward = dx * axis_x + dy * axis_y;
+    let lateral = -dx * axis_y + dy * axis_x;
+    forward >= 0.0
+        && lateral.abs() <= forward * 3.0_f32.sqrt()
+        && point.0 >= 0.0 && point.0 <= FIELD_SIZE_IN
+        && point.1 >= 0.0 && point.1 <= FIELD_SIZE_IN
+}
+
+fn scoring_cone_polygon(center: (f32, f32), side: HiveSide) -> Vec<(f32, f32)> {
+    let axis_angle = match side {
+        HiveSide::Red => 0.0_f32,
+        HiveSide::Blue => std::f32::consts::PI,
+    };
+    let half_angle = std::f32::consts::PI / 3.0;
+    let mut points = vec![center];
+
+    // Sample the 120-degree fan. Each ray ends at the first field wall it hits,
+    // so the filled polygon follows the field perimeter rather than stopping
+    // at an artificial circular arc.
+    for step in 0..=48 {
+        let angle = axis_angle - half_angle
+            + (2.0 * half_angle) * step as f32 / 48.0;
+        let dx = angle.cos();
+        let dy = angle.sin();
+        let mut distance = f32::INFINITY;
+        if dx > 0.0 { distance = distance.min((FIELD_SIZE_IN - center.0) / dx); }
+        if dx < 0.0 { distance = distance.min((0.0 - center.0) / dx); }
+        if dy > 0.0 { distance = distance.min((FIELD_SIZE_IN - center.1) / dy); }
+        if dy < 0.0 { distance = distance.min((0.0 - center.1) / dy); }
+        points.push((center.0 + dx * distance, center.1 + dy * distance));
+    }
+    points
 }
 
 fn point_in_hive_cell(point: (f32, f32), center: (f32, f32)) -> bool {
