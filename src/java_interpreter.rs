@@ -50,7 +50,7 @@ fn parse_call(source: &str, start: usize) -> Option<(CommandNode, usize)> {
     if bytes.get(open) != Some(&b'(') { return None; }
     let close = matching_delimiter(source, open, b'(', b')')?;
     let raw_args = split_top_level(&source[open + 1..close]);
-    let args = raw_args.into_iter().map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+    let args = raw_args.into_iter().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect::<Vec<String>>();
     if name == "sequential" || name == "parallel" {
         let children = args.iter().map(|arg| parse_expression(arg)).collect();
         Some((CommandNode::Group { kind: name, children }, close + 1))
