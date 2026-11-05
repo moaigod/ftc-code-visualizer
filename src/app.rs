@@ -96,6 +96,7 @@ pub struct VisualizerApp {
     red_hive_tip_count: u32,
     blue_hive_tip_count: u32,
     autonomous_waypoints: Vec<(f32, f32)>,
+    autonomous_headings: Vec<Option<f32>>,
     autonomous_waypoint_index: usize,
     autonomous_running: bool,
     autonomous_status: String,
@@ -141,6 +142,7 @@ impl Default for VisualizerApp {
             red_hive_tip_count: 0,
             blue_hive_tip_count: 0,
             autonomous_waypoints: Vec::new(),
+            autonomous_headings: Vec::new(),
             autonomous_waypoint_index: 0,
             autonomous_running: false,
             autonomous_status: "No autonomous program running.".to_owned(),
@@ -154,6 +156,7 @@ impl VisualizerApp {
         self.elapsed_seconds = 0.0; self.is_running = false; self.teleop_active = false;
         self.autonomous_running = false;
         self.autonomous_waypoints.clear();
+        self.autonomous_headings.clear();
         self.autonomous_waypoint_index = 0;
         self.autonomous_status = "Autonomous stopped by reset.".to_owned();
         self.forward_velocity = 0.0; self.strafe_velocity = 0.0; self.turn_velocity = 0.0;
@@ -187,6 +190,7 @@ impl VisualizerApp {
             self.heading_deg = (90.0 - heading_rad.to_degrees()).rem_euclid(360.0);
         }
         self.autonomous_waypoints = plan.waypoints;
+        self.autonomous_headings = plan.waypoint_headings;
         self.autonomous_waypoint_index = 0;
         self.autonomous_running = true;
         self.is_running = false;
@@ -852,7 +856,11 @@ impl VisualizerApp {
                 if distance > 0.001 {
                     self.robot_x += dx / distance * step;
                     self.robot_y += dy / distance * step;
-                    let desired_heading = dx.atan2(dy).to_degrees().rem_euclid(360.0);
+                    let desired_heading = self.autonomous_headings
+                        .get(self.autonomous_waypoint_index)
+                        .and_then(|heading| *heading)
+                        .map(|heading_rad| (90.0 - heading_rad.to_degrees()).rem_euclid(360.0))
+                        .unwrap_or_else(|| dx.atan2(dy).to_degrees().rem_euclid(360.0));
                     let heading_delta = (desired_heading - self.heading_deg + 540.0).rem_euclid(360.0) - 180.0;
                     self.heading_deg = (self.heading_deg + heading_delta * (1.0 - (-8.0 * dt).exp())).rem_euclid(360.0);
                 }
