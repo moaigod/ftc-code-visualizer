@@ -489,8 +489,8 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         // robot heading interpolation independently of that geometry.
         if let Some(curve_poses) = resolve_pose_args("curve").filter(|poses| poses.len() >= 3) {
             let heading_poses = resolve_pose_args("linear").unwrap_or_default();
-            let mut points = Vec::new();
-            let mut headings = Vec::new();
+            let mut points: Vec<(f32, f32)> = Vec::new();
+            let mut headings: Vec<Option<f32>> = Vec::new();
             let samples = 48;
             let heading_start = heading_poses.first().map(|pose| pose.2)
                 .or_else(|| curve_poses.first().map(|pose| pose.2)).unwrap_or(0.0);
