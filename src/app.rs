@@ -75,7 +75,7 @@ pub struct VisualizerApp {
     forward_velocity: f32, strafe_velocity: f32, turn_velocity: f32,
     carried_elements: Vec<CarriedElement>,
     field_pollen: Vec<Pollen>,
-    pollen_projectile: Option<PollenProjectile>,
+    pollen_projectiles: Vec<PollenProjectile>,
     pollen_status: String,
     drive_wheel_power: [f32; 4],
     drive_wheel_velocity: [f32; 4],
@@ -130,7 +130,7 @@ impl Default for VisualizerApp {
             forward_velocity: 0.0, strafe_velocity: 0.0, turn_velocity: 0.0,
             carried_elements: vec![CarriedElement { kind: ElementKind::Pollen, hive: None }; MAX_POLLEN as usize],
             field_pollen: starting_field_pollen(),
-            pollen_projectile: None,
+            pollen_projectiles: Vec::new(),
             pollen_status: "4 preloaded pollen onboard.".to_owned(),
             drive_wheel_power: [0.0; 4],
             drive_wheel_velocity: [0.0; 4],
@@ -198,7 +198,7 @@ impl VisualizerApp {
             MAX_POLLEN as usize
         ];
         self.field_pollen = starting_field_pollen();
-        self.pollen_projectile = None;
+        self.pollen_projectiles.clear();
         self.pollen_status = "4 preloaded pollen onboard.".to_owned();
         self.flower_intake_cooldown = 0.0;
         self.intake_running = false;
@@ -520,7 +520,7 @@ impl VisualizerApp {
         if has_intake&&!self.intake_running {self.pollen_status="Shot blocked: activate the detected intake first.".to_owned();return;}
         if has_feeder&&!self.feeder_running {self.pollen_status="Shot blocked: activate the detected feeder first.".to_owned();return;}
         if self.carried_elements.is_empty() {self.pollen_status="No scoring elements onboard to shoot.".to_owned();return;}
-        if self.pollen_projectile.is_some()||self.shot_cooldown>0.0{return;}
+        if self.shot_cooldown>0.0{return;}
         let target=self.flywheel_target_velocity;
         if target<=0.0 {self.pollen_status="No positive setVelocity() target was resolved from the selected OpMode.".to_owned();return;}
         let min=(target*0.25).max(100.0);
@@ -549,8 +549,8 @@ impl VisualizerApp {
         let speed = base_speed * (1.0 - 0.25 * angle_fraction);
         let horizontal_speed=speed*angle.cos();
         let vertical_speed=speed*angle.sin();
-        self.pollen_projectile=Some(PollenProjectile{x:launch_x,y:launch_y,vx:launch.sin()*horizontal_speed,vy:launch.cos()*horizontal_speed,vz:vertical_speed,z:0.0,elapsed:0.0,kind,hive:cargo.hive,can_score_red,can_score_blue});
-        let loss=(0.30+(target/3000.0)*0.20).clamp(0.30,0.55);
+        self.pollen_projectiles.push(PollenProjectile{x:launch_x,y:launch_y,vx:launch.sin()*horizontal_speed,vy:launch.cos()*horizontal_speed,vz:vertical_speed,z:0.0,elapsed:0.0,kind,hive:cargo.hive,can_score_red,can_score_blue});
+        let loss=(0.20+(target/3000.0)*0.25).clamp(0.20,0.45);
         self.flywheel_velocity*=1.0-loss;
         // Both mechanisms contribute to the feed rate. Averaging their
         // normalized powers avoids letting the slower motor completely
@@ -763,7 +763,8 @@ impl VisualizerApp {
     }
 
     fn update_pollen(&mut self, dt: f32) {
-        if let Some(mut projectile) = self.pollen_projectile {
+        let mut active_projectiles = Vec::with_capacity(self.pollen_projectiles.len());
+        for mut projectile in std::mem::take(&mut self.pollen_projectiles) {
             projectile.elapsed += dt;
             let previous_x = projectile.x;
             let previous_y = projectile.y;
@@ -772,46 +773,36 @@ impl VisualizerApp {
             projectile.z += projectile.vz * dt - 0.5 * 32.174 * dt * dt;
             projectile.vz -= 32.174 * dt;
 
-            // Calibrated tipping load: 8 pollen-equivalent units. Each Nectar is
-            // weighted as 1.6 Pollen, so 3 starting Nectar + 4 Pollen tips;
-            // 5 Nectar alone or 8 Pollen alone also reaches the threshold.
-            // Test the entire movement segment, not only its endpoint, so a
-            // fast projectile cannot skip over a hive between simulation frames.
+            // Check the full movement segment so fast projectiles cannot skip a hive.
             let red_untipped = hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0;
             let blue_untipped = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0;
-            // A shot can score only in the alliance cone it was launched from.
             let in_red_cell = projectile.can_score_red
-                && segment_intersects_hive_cell(
-                    (previous_x, previous_y), (projectile.x, projectile.y), red_untipped,
-                );
+                && segment_intersects_hive_cell((previous_x, previous_y), (projectile.x, projectile.y), red_untipped);
             let in_blue_cell = projectile.can_score_blue
-                && segment_intersects_hive_cell(
-                    (previous_x, previous_y), (projectile.x, projectile.y), blue_untipped,
-                );
-            // Nectar retains its originating alliance. It cannot score in the
-            // opposing alliance's cell, and its color/ownership is never rewritten.
+                && segment_intersects_hive_cell((previous_x, previous_y), (projectile.x, projectile.y), blue_untipped);
             let valid_red_score = in_red_cell && projectile.hive != Some(HiveSide::Blue);
             let valid_blue_score = in_blue_cell && projectile.hive != Some(HiveSide::Red);
+
             if valid_red_score || valid_blue_score {
-                let (side, center) = if valid_red_score {(HiveSide::Red,red_untipped)} else {(HiveSide::Blue,blue_untipped)};
+                let (side, center) = if valid_red_score { (HiveSide::Red, red_untipped) } else { (HiveSide::Blue, blue_untipped) };
                 let (pollen_count, nectar_count) = match side {
                     HiveSide::Red => {
-                        match projectile.kind { ElementKind::Pollen => self.red_hive_pollen=self.red_hive_pollen.saturating_add(1), ElementKind::Nectar => self.red_hive_extra_nectar=self.red_hive_extra_nectar.saturating_add(1) }
-                        (self.red_hive_pollen,self.red_hive_extra_nectar)
+                        match projectile.kind {
+                            ElementKind::Pollen => self.red_hive_pollen = self.red_hive_pollen.saturating_add(1),
+                            ElementKind::Nectar => self.red_hive_extra_nectar = self.red_hive_extra_nectar.saturating_add(1),
+                        }
+                        (self.red_hive_pollen, self.red_hive_extra_nectar)
                     }
                     HiveSide::Blue => {
-                        match projectile.kind { ElementKind::Pollen => self.blue_hive_pollen=self.blue_hive_pollen.saturating_add(1), ElementKind::Nectar => self.blue_hive_extra_nectar=self.blue_hive_extra_nectar.saturating_add(1) }
-                        (self.blue_hive_pollen,self.blue_hive_extra_nectar)
+                        match projectile.kind {
+                            ElementKind::Pollen => self.blue_hive_pollen = self.blue_hive_pollen.saturating_add(1),
+                            ElementKind::Nectar => self.blue_hive_extra_nectar = self.blue_hive_extra_nectar.saturating_add(1),
+                        }
+                        (self.blue_hive_pollen, self.blue_hive_extra_nectar)
                     }
                 };
 
-                // Place the visible scored piece fully inside the scoring cell,
-                // even when the projectile first crossed the boundary at its edge.
-                // Scored pieces remain visible but are no longer physical loose pieces.
-                let scored_radius = match projectile.kind {
-                    ElementKind::Pollen => POLLEN_RADIUS_IN,
-                    ElementKind::Nectar => NECTAR_RADIUS_IN,
-                };
+                let scored_radius = match projectile.kind { ElementKind::Pollen => POLLEN_RADIUS_IN, ElementKind::Nectar => NECTAR_RADIUS_IN };
                 let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
                 self.field_pollen.push(Pollen {
                     x: projectile.x.clamp(min_x + scored_radius, max_x - scored_radius),
@@ -825,16 +816,15 @@ impl VisualizerApp {
                     vy: 0.0,
                 });
 
-                // The three starting Nectar pieces exist only in each alliance's
-                // initially active cell, and are counted only for its first tip.
                 let starting_nectar_load = match side {
                     HiveSide::Red if self.red_hive_tip_count == 0 => HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS,
                     HiveSide::Blue if self.blue_hive_tip_count == 0 => HIVE_STARTING_NECTAR as f32 * HIVE_NECTAR_LOAD_UNITS,
                     _ => 0.0,
                 };
-                let load=starting_nectar_load+nectar_count as f32*HIVE_NECTAR_LOAD_UNITS+pollen_count as f32*HIVE_POLLEN_LOAD_UNITS;
-                self.pollen_projectile=None;
-                if load>=HIVE_TIP_LOAD_UNITS {
+                let load = starting_nectar_load + nectar_count as f32 * HIVE_NECTAR_LOAD_UNITS
+                    + pollen_count as f32 * HIVE_POLLEN_LOAD_UNITS;
+
+                if load >= HIVE_TIP_LOAD_UNITS {
                     match side {
                         HiveSide::Red => {
                             self.red_hive_tipped = !self.red_hive_tipped;
@@ -849,27 +839,25 @@ impl VisualizerApp {
                             self.blue_hive_extra_nectar = 0;
                         }
                     }
-                    // The old active cell becomes the tipped cell. Release its
-                    // previously scored pieces so they can collide with and be
-                    // collected by the robot again.
                     for element in &mut self.field_pollen {
                         if element.scored && element.hive == Some(side) {
                             element.scored = false;
                         }
                     }
-                    self.pollen_status=format!("{} hive tipped. Its opposite fixed cell is now untipped.",if side==HiveSide::Red{"Red"}else{"Blue"});
+                    self.pollen_status = format!("{} hive tipped. Its opposite fixed cell is now untipped.", if side == HiveSide::Red { "Red" } else { "Blue" });
                 } else {
-                    self.pollen_status=format!("{} hive: {:.1}/8.0 load units toward tipping.",if side==HiveSide::Red{"Red"}else{"Blue"},load);
+                    self.pollen_status = format!("{} hive: {:.1}/8.0 load units toward tipping.", if side == HiveSide::Red { "Red" } else { "Blue" }, load);
                 }
-                return;
+                continue;
             }
+
             if (projectile.elapsed > 0.0 && projectile.z <= 0.0)
                 || projectile.x < POLLEN_RADIUS_IN
                 || projectile.x > FIELD_SIZE_IN - POLLEN_RADIUS_IN
                 || projectile.y < POLLEN_RADIUS_IN
                 || projectile.y > FIELD_SIZE_IN - POLLEN_RADIUS_IN
             {
-                let landed = Pollen {
+                self.field_pollen.push(Pollen {
                     x: projectile.x.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
                     y: projectile.y.clamp(POLLEN_RADIUS_IN, FIELD_SIZE_IN - POLLEN_RADIUS_IN),
                     radius: match projectile.kind { ElementKind::Pollen => POLLEN_RADIUS_IN, ElementKind::Nectar => NECTAR_RADIUS_IN },
@@ -879,14 +867,13 @@ impl VisualizerApp {
                     hive: projectile.hive,
                     vx: projectile.vx * 0.18,
                     vy: projectile.vy * 0.18,
-                };
-                self.field_pollen.push(landed);
-                self.pollen_projectile = None;
+                });
                 self.pollen_status = format!("{} landed back on the field. {} element(s) onboard.", match projectile.kind { ElementKind::Pollen => "Pollen", ElementKind::Nectar => "Nectar" }, self.carried_elements.len());
             } else {
-                self.pollen_projectile = Some(projectile);
+                active_projectiles.push(projectile);
             }
         }
+        self.pollen_projectiles = active_projectiles;
     }
 
     fn telemetry_value(&self, expression: &str) -> String {
@@ -989,7 +976,7 @@ impl VisualizerApp {
         }
         self.update_pollen(dt);
         self.update_loose_pollen_physics(dt);
-        if self.pollen_projectile.is_some() || self.flower_intake_cooldown > 0.0 || self.intake_running || self.flywheel_velocity != self.flywheel_target_velocity || self.shot_cooldown > 0.0 {
+        if !self.pollen_projectiles.is_empty() || self.flower_intake_cooldown > 0.0 || self.intake_running || self.flywheel_velocity != self.flywheel_target_velocity || self.shot_cooldown > 0.0 {
             ctx.request_repaint();
         }
 
@@ -1292,7 +1279,7 @@ impl VisualizerApp {
             painter.circle_stroke(position,radius,Stroke::new(1.0_f32,Color32::from_rgb(65,75,90)));
         }
 
-        if let Some(projectile) = self.pollen_projectile {
+        for projectile in &self.pollen_projectiles {
             let arc_height = projectile.z.max(0.0);
             let position = Pos2::new(
                 field.left() + projectile.x * scale,
