@@ -207,7 +207,6 @@ pub enum JavaStatement {
     Assignment { target: String, value: String },
     Expression(String),
     Empty,
-    Unsupported(String),
 }
 
 #[derive(Clone, Debug)]
