@@ -326,6 +326,8 @@ pub struct AutonomousMechanismAction {
     pub role: MotorRole,
     pub method: String,
     pub value: Option<f32>,
+    /// Minimum flywheel speed required before this action can activate.
+    pub minimum_flywheel_velocity: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -338,6 +340,8 @@ pub struct AutonomousPlan {
     pub path_found: bool,
     pub startup_actions: Vec<AutonomousMechanismAction>,
     pub post_path_actions: Vec<AutonomousMechanismAction>,
+    /// Duration of waitMs(...) commands after the path and mechanism actions.
+    pub post_path_wait_ms: u64,
     pub follow_path_called: bool,
     pub diagnostics: Vec<String>,
 }
@@ -450,6 +454,15 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     let mut path_seen = false;
     for arg in sequential_args {
         let arg_text = tokens_to_text(arg);
+        if arg.first().is_some_and(|token| token.ident_is("waitMs")) {
+            if arg.get(1).is_some_and(|token| token.punct("(")) {
+                if let Some(end) = matching(arg, 1, "(", ")") {
+                    plan.post_path_wait_ms = resolve_number(source, &tokens_to_text(&arg[2..end]))
+                        .unwrap_or(0.0).max(0.0) as u64;
+                }
+            }
+            continue;
+        }
         if arg_text.contains("follow") {
             path_seen = true;
             continue;
@@ -540,10 +553,14 @@ fn extract_instant_method_actions(
                 let expression = tokens_to_text(&body[member_at + 3..end]);
                 let role = classify_motor(variable, variable);
                 if matches!(role, MotorRole::Other | MotorRole::Drive(_)) { continue; }
+                let minimum_flywheel_velocity = minimum_flywheel_velocity_for_command(
+                    body, lambda_open, lambda_end, command_at, source,
+                );
                 actions.push(AutonomousMechanismAction {
                     role,
                     method: method.to_owned(),
                     value: resolve_number(source, &expression),
+                    minimum_flywheel_velocity,
                 });
             }
         }
@@ -552,6 +569,40 @@ fn extract_instant_method_actions(
         }
     }
     methods
+}
+
+
+fn minimum_flywheel_velocity_for_command(
+    tokens: &[Token],
+    lambda_open: usize,
+    lambda_end: usize,
+    command_at: usize,
+    source: &str,
+) -> Option<f32> {
+    let mut required = None;
+    for i in lambda_open + 1..command_at {
+        if !tokens[i].ident_is("if") || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) {
+            continue;
+        }
+        let Some(condition_end) = matching(tokens, i + 1, "(", ")") else { continue; };
+        let Some(body_open) = (condition_end + 1..lambda_end).find(|&n| tokens[n].punct("{")) else { continue; };
+        let Some(body_end) = matching(tokens, body_open, "{", "}") else { continue; };
+        if command_at <= body_open || command_at >= body_end {
+            continue;
+        }
+        let condition = &tokens[i + 2..condition_end];
+        if !condition.iter().any(|token| token.ident_is("getVelocity")) {
+            continue;
+        }
+        for pair in condition.windows(2) {
+            if pair[0].punct(">") {
+                if let Some(value) = resolve_number(source, &tokens_to_text(&pair[1..])) {
+                    required = Some(required.map_or(value, |old: f32| old.max(value)));
+                }
+            }
+        }
+    }
+    required
 }
 
 fn append_sampled_path(waypoints: &mut Vec<(f32, f32)>, headings: &mut Vec<Option<f32>>, points: &[(f32, f32)], samples: usize) {
