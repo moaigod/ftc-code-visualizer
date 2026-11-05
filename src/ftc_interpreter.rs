@@ -660,63 +660,37 @@ fn find_sequential_arguments<'a>(tokens: &'a [Token]) -> Vec<&'a [Token]> {
     Vec::new()
 }
 
-fn extract_instant_method_actions(
-    source: &str,
-    tokens: &[Token],
-) -> Vec<(String, Vec<AutonomousMechanismAction>)> {
-    let mut methods = Vec::new();
-    for i in 0..tokens.len().saturating_sub(3) {
-        if !tokens[i].ident_is("Command") { continue; }
-        let Some(name) = tokens.get(i + 1).and_then(Token::ident) else { continue; };
-        if !tokens.get(i + 2).is_some_and(|token| token.punct("(")) { continue; }
-        let Some(params_end) = matching(tokens, i + 2, "(", ")") else { continue; };
-        let Some(body_open) = (params_end + 1..tokens.len()).find(|&n| tokens[n].punct("{")) else { continue; };
-        let Some(body_end) = matching(tokens, body_open, "{", "}") else { continue; };
-        let body = &tokens[body_open + 1..body_end];
+fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(String, Vec<AutonomousMechanismAction>)> {
+    let parsed = crate::java_interpreter::parse_java_program(source);
+    let mut result = Vec::new();
+    for method in parsed.methods.iter().filter(|method| method.return_type == "Command") {
+        let body = tokenize(&strip_comments(&method.body_source));
         let mut actions = Vec::new();
         for p in 0..body.len().saturating_sub(4) {
             if !body[p].ident_is("instant") || !body[p + 1].punct("(") { continue; }
-            let Some(instant_end) = matching(body, p + 1, "(", ")") else { continue; };
+            let Some(instant_end) = matching(&body, p + 1, "(", ")") else { continue; };
             let Some(lambda_open) = (p + 2..instant_end).find(|&n| body[n].punct("{")) else { continue; };
-            let Some(lambda_end) = matching(body, lambda_open, "{", "}") else { continue; };
+            let Some(lambda_end) = matching(&body, lambda_open, "{", "}") else { continue; };
             for command_at in lambda_open + 1..lambda_end {
                 let Some(variable) = body[command_at].ident() else { continue; };
-                // A casted motor receiver is tokenized as
-                // ((DcMotorEx)OuttakeL).setVelocity(...), so skip the
-                // closing parenthesis between the variable and member access.
                 let mut member_at = command_at + 1;
-                while member_at < lambda_end
-                    && member_at <= command_at + 3
-                    && body[member_at].punct(")")
-                {
-                    member_at += 1;
-                }
-                if !body.get(member_at).is_some_and(|token| token.punct(".")) { continue; }
-                let Some(method) = body.get(member_at + 1).and_then(Token::ident) else { continue; };
-                if method != "setPower" && method != "setVelocity" { continue; }
-                if !body.get(member_at + 2).is_some_and(|token| token.punct("(")) { continue; }
-                let Some(end) = matching(body, member_at + 2, "(", ")") else { continue; };
+                while member_at < lambda_end && member_at <= command_at + 3 && body[member_at].punct(")") { member_at += 1; }
+                if !body.get(member_at).is_some_and(|t| t.punct(".")) { continue; }
+                let Some(command) = body.get(member_at + 1).and_then(Token::ident) else { continue; };
+                if command != "setPower" && command != "setVelocity" { continue; }
+                if !body.get(member_at + 2).is_some_and(|t| t.punct("(")) { continue; }
+                let Some(end) = matching(&body, member_at + 2, "(", ")") else { continue; };
                 let expression = tokens_to_text(&body[member_at + 3..end]);
                 let role = classify_motor(variable, variable);
                 if matches!(role, MotorRole::Other | MotorRole::Drive(_)) { continue; }
-                let minimum_flywheel_velocity = minimum_flywheel_velocity_for_command(
-                    body, lambda_open, lambda_end, command_at, source,
-                );
-                actions.push(AutonomousMechanismAction {
-                    role,
-                    method: method.to_owned(),
-                    value: resolve_number(source, &expression),
-                    minimum_flywheel_velocity,
-                });
+                let minimum_flywheel_velocity = minimum_flywheel_velocity_for_command(&body, lambda_open, lambda_end, command_at, source);
+                actions.push(AutonomousMechanismAction { role, method: command.to_owned(), value: resolve_number(source, &expression), minimum_flywheel_velocity });
             }
         }
-        if !actions.is_empty() {
-            methods.push((name.to_owned(), actions));
-        }
+        if !actions.is_empty() { result.push((method.name.clone(), actions)); }
     }
-    methods
+    result
 }
-
 
 fn minimum_flywheel_velocity_for_command(
     tokens: &[Token],
