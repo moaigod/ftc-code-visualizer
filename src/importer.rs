@@ -44,12 +44,33 @@ pub fn scan_project(project_root: &Path) -> Result<ProjectScan, String> {
     let mut files = Vec::new();
     collect_source_files(&source_root, &mut files)?;
     let source_files = files.len();
-    let mut op_modes = Vec::new();
-
+    let mut loaded_sources = Vec::with_capacity(files.len());
     for path in files {
         let source = fs::read_to_string(&path)
             .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-        if let Some(info) = parse_op_mode(path, source) {
+        loaded_sources.push((path, source));
+    }
+
+    // Hardware declarations may live in a dedicated RobotConfig.java file.
+    // Append those source files to each OpMode's interpreter input so selecting
+    // an OpMode does not require the declarations to be physically in that file.
+    let hardware_config_sources: Vec<(PathBuf, String)> = loaded_sources.iter()
+        .filter(|(_, source)| source.contains("ftcCV.hardware.motor"))
+        .map(|(path, source)| (path.clone(), source.clone()))
+        .collect();
+
+    let mut op_modes = Vec::new();
+    for (path, source) in loaded_sources {
+        if let Some(mut info) = parse_op_mode(path.clone(), source) {
+            for (config_path, config_source) in &hardware_config_sources {
+                if config_path != &path && !info.source.contains(config_source) {
+                    info.source.push_str("\n\\n// Imported ftcCV hardware declarations from ");
+                    info.source.push_str(&config_path.display().to_string());
+                    info.source.push_str("\n");
+                    info.source.push_str(config_source);
+                    info.source.push_str("\n");
+                }
+            }
             op_modes.push(info);
         }
     }
