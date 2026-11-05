@@ -729,7 +729,7 @@ impl VisualizerApp {
 
         let mut element_bodies = Vec::new();
         for (index, element) in self.field_pollen.iter().enumerate() {
-            if element.from_flower || element.scored {
+            if element.scored || (element.from_flower && !self.intake_running) {
                 continue;
             }
             // Starting Nectar inside an untipped hive is intentionally staged:
