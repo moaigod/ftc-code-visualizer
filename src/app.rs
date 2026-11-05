@@ -337,10 +337,8 @@ impl VisualizerApp {
         let blue_center=hive_pair_centers(HiveSide::Blue,self.blue_hive_tipped).0;
         let can_score_red=point_in_scoring_cone((launch_x,launch_y),red_center,HiveSide::Red,self.red_hive_tipped);
         let can_score_blue=point_in_scoring_cone((launch_x,launch_y),blue_center,HiveSide::Blue,self.blue_hive_tipped);
-        if !can_score_red && !can_score_blue {
-            self.pollen_status="Shot blocked: the robot must be inside a visible scoring cone.".to_owned();
-            return;
-        }
+        // Shots may be fired from anywhere, but only shots launched inside
+        // the matching scoring cone are allowed to score.
         // FIFO: the first collected element is the first one launched.
         let cargo=self.carried_elements.remove(0);
         let kind=cargo.kind;
