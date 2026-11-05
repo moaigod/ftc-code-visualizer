@@ -605,6 +605,8 @@ impl VisualizerApp {
                 .rotation(-heading)
                 .linvel(Vector::new(world_vx, world_vy))
                 .angvel(-self.turn_velocity.to_radians())
+                .linear_damping(0.04)
+                .angular_damping(0.08)
                 .ccd_enabled(true),
             ColliderBuilder::cuboid(9.0, 9.0)
                 .density(0.0556)
@@ -632,6 +634,9 @@ impl VisualizerApp {
                 RigidBodyBuilder::dynamic()
                     .translation(Vector::new(element.x, element.y))
                     .linvel(Vector::new(element.vx, element.vy))
+                    // Match the loose-element rolling resistance used by the
+                    // previous field model so pieces naturally settle.
+                    .linear_damping(2.8)
                     .ccd_enabled(true),
                 ColliderBuilder::ball(element.radius)
                     .density(0.02)
@@ -1092,7 +1097,8 @@ impl VisualizerApp {
                 // Accelerate toward the path target, then let Rapier resolve
                 // chassis contact, field boundaries, and momentum transfer.
                 let braking_speed = (2.0 * 85.0 * distance.max(0.0)).sqrt();
-                let target_speed = (self.forward_velocity + 85.0 * dt).min(34.0).min(braking_speed);
+                let current_speed = self.forward_velocity.hypot(self.strafe_velocity);
+                let target_speed = (current_speed + 85.0 * dt).min(34.0).min(braking_speed);
                 if distance > 0.001 {
                     let desired_heading = self.autonomous_headings
                         .get(self.autonomous_waypoint_index)
