@@ -11,7 +11,14 @@ pub enum CommandNode {
 /// Parse the first sequential(...) command expression, preserving nested
 /// sequential/parallel groups and the exact source order of their children.
 pub fn parse_autonomous_command_tree(source: &str) -> Option<CommandNode> {
-    let clean = strip_comments(source);
+    let parsed = parse_java_program(source);
+    let method_source = parsed.methods.iter()
+        .find(|method| method.name.to_ascii_lowercase().contains("auto")
+            && method.body_source.contains("sequential"))
+        .or_else(|| parsed.methods.iter().find(|method| method.body_source.contains("sequential")))
+        .map(|method| method.body_source.as_str())
+        .unwrap_or(source);
+    let clean = strip_comments(method_source);
     let bytes = clean.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -531,6 +538,17 @@ mod java_ast_tests {
         assert!(matches!(&method.body, JavaStatement::Block(statements)
             if matches!(statements.first(), Some(JavaStatement::VariableDeclaration { name, .. }) if name == "speed")
             && matches!(statements.get(1), Some(JavaStatement::Assignment { target, .. }) if target == "speed")));
+    }
+
+    #[test]
+    fn selects_the_autonomous_method_instead_of_a_helper() {
+        let source = r#"
+            private Command helper() { return sequential(fake()); }
+            private Command autoRoutine() { return sequential(real()); }
+        "#;
+        let tree = parse_autonomous_command_tree(source).unwrap();
+        assert!(matches!(tree, CommandNode::Group { children, .. }
+            if matches!(children.first(), Some(CommandNode::Call { name, .. }) if name == "real")));
     }
 
 }
