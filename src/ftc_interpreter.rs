@@ -334,6 +334,8 @@ pub struct AutonomousPlan {
     pub waypoints: Vec<(f32, f32)>,
     /// Optional PedroPathing heading in radians for each sampled waypoint.
     pub waypoint_headings: Vec<Option<f32>>,
+    /// True when a supported PedroPathing path expression was parsed, even if it has zero length.
+    pub path_found: bool,
     pub startup_actions: Vec<AutonomousMechanismAction>,
     pub post_path_actions: Vec<AutonomousMechanismAction>,
     pub follow_path_called: bool,
@@ -418,6 +420,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
             }
             p += 1;
         }
+        if points.len() >= 2 { plan.path_found = true; }
         append_sampled_path(&mut plan.waypoints, &mut plan.waypoint_headings, &points, if is_line { 12 } else { 24 });
     }
 
@@ -435,6 +438,7 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
             }
         }
         if poses.len() >= 2 {
+            plan.path_found = true;
             append_sampled_pose_path(&mut plan.waypoints, &mut plan.waypoint_headings, &poses, 24);
         }
     }
@@ -475,8 +479,10 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
             if !plan.waypoint_headings.is_empty() { plan.waypoint_headings.remove(0); }
         }
     }
-    if plan.waypoints.is_empty() {
+    if !plan.path_found {
         plan.diagnostics.push("No supported PedroPathing paths were found. Expected Bezier constructors or Paths.line(...).linear(...).".to_owned());
+    } else if plan.waypoints.is_empty() {
+        plan.diagnostics.push("A PedroPathing path was recognized, but it has zero length because its poses share the same coordinates.".to_owned());
     }
     if !plan.follow_path_called {
         plan.diagnostics.push("No PedroPathing follow(...) or follower.followPath(...) command was detected; route extraction is preview-only.".to_owned());
