@@ -541,10 +541,12 @@ impl VisualizerApp {
         let spread=SPREAD[self.shot_sequence as usize%SPREAD.len()].to_radians();
         self.shot_sequence=self.shot_sequence.wrapping_add(1);
         let launch=heading+spread;
-        // Keep the flywheel-to-projectile speed model fixed; the adjustable
-        // ramp angle controls the vertical launch component and horizontal range.
-        let speed=(self.flywheel_velocity*0.0320).clamp(3.0,100.0);
+        // Outtake velocity sets the base launch speed. A steeper ramp
+        // reduces the effective exit speed, then redirects it vertically.
+        let base_speed=(self.flywheel_velocity*0.0320).clamp(3.0,100.0);
         let angle=self.ramp_angle_deg.to_radians().clamp(0.0,1.40);
+        let angle_fraction = (self.ramp_angle_deg / 80.0).clamp(0.0, 1.0);
+        let speed = base_speed * (1.0 - 0.25 * angle_fraction);
         let horizontal_speed=speed*angle.cos();
         let vertical_speed=speed*angle.sin();
         self.pollen_projectile=Some(PollenProjectile{x:launch_x,y:launch_y,vx:launch.sin()*horizontal_speed,vy:launch.cos()*horizontal_speed,vz:vertical_speed,z:0.0,elapsed:0.0,kind,hive:cargo.hive,can_score_red,can_score_blue});
