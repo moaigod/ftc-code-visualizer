@@ -338,26 +338,53 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         pair[0].ident_is("followPath") && pair[1].punct("(")
     );
 
-    // PedroPathing Pose(x, y, heading) uses radians for heading.
+    // PoseFactory.degrees().of(x, y, heading) is common in newer
+    // PedroPathing projects. Store named poses so Paths.line(...).linear(...)
+    // can resolve the identifiers used by the autonomous.
+    let uses_degree_factory = tokens.windows(3).any(|w|
+        w[0].ident_is("degrees") && w[1].punct("(") && w[2].punct(")")
+    );
+    let mut named_poses: Vec<(String, (f32, f32, f32))> = Vec::new();
+
     for i in 0..tokens.len().saturating_sub(2) {
-        if !tokens[i].ident_is("Pose") || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) { continue; }
-        let Some(end) = matching(&tokens, i + 1, "(", ")") else { continue; };
-        let args = split_arguments(&tokens[i + 2..end]);
-        if args.len() >= 2 {
-            if let (Some(x), Some(y)) = (
-                resolve_number(source, &tokens_to_text(args[0])),
-                resolve_number(source, &tokens_to_text(args[1])),
-            ) {
-                let heading = args.get(2).and_then(|arg| resolve_angle(source, arg)).unwrap_or(0.0);
-                plan.start_pose = Some((x, y, heading));
-                break;
+        if tokens[i].ident_is("Pose") && tokens.get(i + 1).is_some_and(|t| t.punct("(")) {
+            let Some(end) = matching(&tokens, i + 1, "(", ")") else { continue; };
+            let args = split_arguments(&tokens[i + 2..end]);
+            if args.len() >= 2 {
+                if let (Some(x), Some(y)) = (
+                    resolve_number(source, &tokens_to_text(args[0])),
+                    resolve_number(source, &tokens_to_text(args[1])),
+                ) {
+                    let heading = args.get(2).and_then(|arg| resolve_angle(source, arg)).unwrap_or(0.0);
+                    plan.start_pose = Some((x, y, heading));
+                    break;
+                }
             }
+        }
+
+        // Find declarations of the form: Pose name = pf.of(x, y, heading)
+        if !tokens[i].ident_is("Pose") { continue; }
+        let Some(name) = tokens.get(i + 1).and_then(Token::ident) else { continue; };
+        if !tokens.get(i + 2).is_some_and(|t| t.punct("=")) { continue; }
+        let Some(of_at) = (i + 3..(i + 12).min(tokens.len())).find(|&p| tokens[p].ident_is("of")) else { continue; };
+        if !tokens.get(of_at + 1).is_some_and(|t| t.punct("(")) { continue; }
+        let Some(end) = matching(&tokens, of_at + 1, "(", ")") else { continue; };
+        let args = split_arguments(&tokens[of_at + 2..end]);
+        if args.len() < 3 { continue; }
+        let (Some(x), Some(y), Some(mut heading)) = (
+            resolve_number(source, &tokens_to_text(args[0])),
+            resolve_number(source, &tokens_to_text(args[1])),
+            resolve_number(source, &tokens_to_text(args[2])),
+        ) else { continue; };
+        if uses_degree_factory { heading = heading.to_radians(); }
+        let pose = (x, y, heading);
+        named_poses.push((name.to_owned(), pose));
+        if plan.start_pose.is_none() || name.to_ascii_lowercase().contains("start") {
+            plan.start_pose = Some(pose);
         }
     }
 
-    // Each Bezier path contributes a series of points. Sampling the curve
-    // preserves its shape for the visualizer's follower instead of connecting
-    // only the endpoints with a straight line.
+    // Older PedroPathing constructor-style paths remain supported.
     for i in 0..tokens.len().saturating_sub(2) {
         let is_line = tokens[i].ident_is("BezierLine");
         let is_curve = tokens[i].ident_is("BezierCurve");
@@ -373,41 +400,39 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
                     if args.len() >= 2 {
                         let x = resolve_number(source, &tokens_to_text(args[0]));
                         let y = resolve_number(source, &tokens_to_text(args[1]));
-                        if let (Some(x), Some(y)) = (x, y) {
-                            points.push((x, y));
-                        }
+                        if let (Some(x), Some(y)) = (x, y) { points.push((x, y)); }
                     }
                     p = point_end;
                 }
             }
             p += 1;
         }
-        if points.len() >= 2 {
-            let samples = if is_line { 12 } else { 24 };
-            for step in 0..=samples {
-                let t = step as f32 / samples as f32;
-                let point = if points.len() == 2 {
-                    (points[0].0 * (1.0 - t) + points[1].0 * t,
-                     points[0].1 * (1.0 - t) + points[1].1 * t)
-                } else if points.len() == 3 {
-                    let u = 1.0 - t;
-                    (u*u*points[0].0 + 2.0*u*t*points[1].0 + t*t*points[2].0,
-                     u*u*points[0].1 + 2.0*u*t*points[1].1 + t*t*points[2].1)
-                } else {
-                    let u = 1.0 - t;
-                    (u*u*u*points[0].0 + 3.0*u*u*t*points[1].0 + 3.0*u*t*t*points[2].0 + t*t*t*points[3].0,
-                     u*u*u*points[0].1 + 3.0*u*u*t*points[1].1 + 3.0*u*t*t*points[2].1 + t*t*t*points[3].1)
-                };
-                if plan.waypoints.last().is_none_or(|last| {
-                    (last.0 - point.0).hypot(last.1 - point.1) > 0.05
-                }) {
-                    plan.waypoints.push(point);
-                }
+        append_sampled_path(&mut plan.waypoints, &points, if is_line { 12 } else { 24 });
+    }
+
+    // Newer API: Paths.line(startPose, endPose).linear(startPose, endPose).
+    // Resolve pose identifiers from their PoseFactory declarations.
+    for i in 0..tokens.len().saturating_sub(2) {
+        if !tokens[i].ident_is("linear") || !tokens.get(i + 1).is_some_and(|t| t.punct("(")) { continue; }
+        let Some(end) = matching(&tokens, i + 1, "(", ")") else { continue; };
+        let args = split_arguments(&tokens[i + 2..end]);
+        let mut points = Vec::new();
+        for arg in args {
+            let name = tokens_to_text(arg);
+            if let Some((_, pose)) = named_poses.iter().find(|(n, _)| n == &name) {
+                points.push((pose.0, pose.1));
             }
-        } else {
-            plan.diagnostics.push(format!("Could not read control points for {}.", if is_line { "BezierLine" } else { "BezierCurve" }));
+        }
+        if points.len() >= 2 {
+            append_sampled_path(&mut plan.waypoints, &points, 24);
         }
     }
+
+    // Static-imported PedroCommands.follow(follower, path()) is the newer
+    // Ivy command form; schedule(...) starts it in OpMode.start().
+    plan.follow_path_called |= tokens.iter().enumerate().any(|(i, token)|
+        token.ident_is("follow") && tokens.get(i + 1).is_some_and(|t| t.punct("("))
+    );
 
     if let Some((x, y, _)) = plan.start_pose {
         if plan.waypoints.first().is_some_and(|p| (p.0-x).hypot(p.1-y) < 0.5) {
@@ -415,12 +440,34 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
         }
     }
     if plan.waypoints.is_empty() {
-        plan.diagnostics.push("No supported PedroPathing BezierLine/BezierCurve paths were found. The selected autonomous cannot be driven yet.".to_owned());
+        plan.diagnostics.push("No supported PedroPathing paths were found. Expected Bezier constructors or Paths.line(...).linear(...).".to_owned());
     }
     if !plan.follow_path_called {
-        plan.diagnostics.push("No follower.followPath(...) call was detected; route extraction is preview-only until a supported start call is added.".to_owned());
+        plan.diagnostics.push("No PedroPathing follow(...) or follower.followPath(...) command was detected; route extraction is preview-only.".to_owned());
     }
     plan
+}
+
+fn append_sampled_path(waypoints: &mut Vec<(f32, f32)>, points: &[(f32, f32)], samples: usize) {
+    if points.len() < 2 { return; }
+    for step in 0..=samples {
+        let t = step as f32 / samples as f32;
+        let point = if points.len() == 2 {
+            (points[0].0 * (1.0 - t) + points[1].0 * t,
+             points[0].1 * (1.0 - t) + points[1].1 * t)
+        } else if points.len() == 3 {
+            let u = 1.0 - t;
+            (u*u*points[0].0 + 2.0*u*t*points[1].0 + t*t*points[2].0,
+             u*u*points[0].1 + 2.0*u*t*points[1].1 + t*t*points[2].1)
+        } else {
+            let u = 1.0 - t;
+            (u*u*u*points[0].0 + 3.0*u*u*t*points[1].0 + 3.0*u*t*t*points[2].0 + t*t*t*points[3].0,
+             u*u*u*points[0].1 + 3.0*u*u*t*points[1].1 + 3.0*u*t*t*points[2].1 + t*t*t*points[3].1)
+        };
+        if waypoints.last().is_none_or(|last| (last.0-point.0).hypot(last.1-point.1) > 0.05) {
+            waypoints.push(point);
+        }
+    }
 }
 
 fn split_arguments(tokens: &[Token]) -> Vec<&[Token]> {
