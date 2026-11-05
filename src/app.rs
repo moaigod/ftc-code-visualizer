@@ -822,7 +822,6 @@ impl VisualizerApp {
             if key.contains("outtake") || key.contains("shooter") || key.contains("flywheel") {
                 return format!("{:.1} ticks/s", self.flywheel_velocity);
             }
-            let motor = key.split('.').next().unwrap_or("");
             let index = if key.contains("frontleft") { Some(0) }
                 else if key.contains("frontright") { Some(1) }
                 else if key.contains("backleft") { Some(2) }
@@ -1061,7 +1060,7 @@ impl VisualizerApp {
             painter.add(egui::Shape::convex_polygon(
                 screen_points,
                 Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 48),
-                Stroke::new(1.5, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 190)),
+                Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 190)),
             ));
         }
 
@@ -1102,7 +1101,7 @@ impl VisualizerApp {
             for pair in route_points.windows(2) {
                 let a = Pos2::new(field.left() + pair[0].0 * scale, field.bottom() - pair[0].1 * scale);
                 let b = Pos2::new(field.left() + pair[1].0 * scale, field.bottom() - pair[1].1 * scale);
-                painter.line_segment([a, b], Stroke::new(1.6, Color32::from_rgb(90, 230, 150)));
+                painter.line_segment([a, b], Stroke::new(1.6_f32, Color32::from_rgb(90, 230, 150)));
             }
         }
 
