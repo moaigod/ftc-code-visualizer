@@ -631,32 +631,7 @@ impl VisualizerApp {
                     && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0);
             if inside_untipped_hive { continue; }
 
-            let dx = pollen.x - self.robot_x;
-            let dy = pollen.y - self.robot_y;
-            let local_x = dx * heading.cos() + dy * heading.sin();
-            let local_y = dx * heading.sin() - dy * heading.cos();
-            let closest_x = local_x.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
-            let closest_y = local_y.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
-            let away_x = local_x - closest_x;
-            let away_y = local_y - closest_y;
-            let distance = away_x.hypot(away_y);
-            if distance < pollen.radius {
-                let (local_nx, local_ny) = if distance > 0.001 {
-                    (away_x / distance, away_y / distance)
-                } else if local_x.abs() > local_y.abs() {
-                    (local_x.signum(), 0.0)
-                } else {
-                    (0.0, local_y.signum().copysign(1.0))
-                };
-                let nx = local_nx * heading.cos() + local_ny * heading.sin();
-                let ny = local_nx * heading.sin() - local_ny * heading.cos();
-                let overlap = pollen.radius - distance;
-                pollen.x += nx * overlap;
-                pollen.y += ny * overlap;
-                let push_speed = robot_speed.max(2.0);
-                pollen.vx = pollen.vx * 0.25 + nx * push_speed * 0.85;
-                pollen.vy = pollen.vy * 0.25 + ny * push_speed * 0.85;
-            }
+            collide_element_with_robot(pollen, self.robot_x, self.robot_y, heading, robot_speed);
 
             // Invisible hive perimeter walls affect scoring elements only.
             // They keep the starting Nectar inside each untipped hive while
@@ -717,8 +692,9 @@ impl VisualizerApp {
             pollen.y = pollen.y.clamp(min_y + pollen.radius, max_y - pollen.radius);
         }
 
-        // Keep every loose pollen piece fully inside the field. Bounce it
-        // gently off the boundary instead of allowing it to leave the play area.
+        // Keep every loose scoring element inside the field, then resolve
+        // robot contact again. Boundary correction can otherwise push an
+        // element back through the chassis when it is trapped against a wall.
         for pollen in &mut self.field_pollen {
             if pollen.scored { continue; }
             let min = pollen.radius;
@@ -736,6 +712,17 @@ impl VisualizerApp {
             } else if pollen.y > max {
                 pollen.y = max;
                 pollen.vy = -pollen.vy.abs() * 0.35;
+            }
+
+            if !pollen.from_flower {
+                let inside_untipped_hive =
+                    (pollen.hive == Some(HiveSide::Red)
+                        && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0))
+                    || (pollen.hive == Some(HiveSide::Blue)
+                        && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0));
+                if !inside_untipped_hive {
+                    collide_element_with_robot(pollen, self.robot_x, self.robot_y, self.heading_deg.to_radians(), robot_speed);
+                }
             }
         }
     }
@@ -841,12 +828,31 @@ impl VisualizerApp {
                             self.blue_hive_extra_nectar = 0;
                         }
                     }
+                    // The scoring pieces are released from the hive and
+                    // scatter outward instead of remaining frozen in the cell.
+                    let scatter_center = match side {
+                        HiveSide::Red => hive_pair_centers(HiveSide::Red, !self.red_hive_tipped).1,
+                        HiveSide::Blue => hive_pair_centers(HiveSide::Blue, !self.blue_hive_tipped).1,
+                    };
+                    let released_count = self.field_pollen.iter()
+                        .filter(|element| element.scored && element.hive == Some(side))
+                        .count()
+                        .max(1);
+                    let phase = (self.red_hive_tip_count + self.blue_hive_tip_count) as f32 * 0.37;
+                    let mut released_index = 0usize;
                     for element in &mut self.field_pollen {
                         if element.scored && element.hive == Some(side) {
+                            let angle = phase + std::f32::consts::TAU
+                                * released_index as f32 / released_count as f32;
+                            let speed = 13.0 + (released_index % 4) as f32 * 2.8;
                             element.scored = false;
+                            element.vx = angle.cos() * speed;
+                            element.vy = angle.sin() * speed;
+                            released_index += 1;
                         }
                     }
-                    self.pollen_status = format!("{} hive tipped. Its opposite fixed cell is now untipped.", if side == HiveSide::Red { "Red" } else { "Blue" });
+                    let _ = scatter_center;
+                    self.pollen_status = format!("{} hive tipped. Scoring elements spilled out and scattered.", if side == HiveSide::Red { "Red" } else { "Blue" });
                 } else {
                     self.pollen_status = format!("{} hive: {:.1}/8.0 load units toward tipping.", if side == HiveSide::Red { "Red" } else { "Blue" }, load);
                 }
@@ -1511,6 +1517,46 @@ fn segment_intersects_bounds(
         }
     }
     true
+}
+
+fn collide_element_with_robot(
+    element: &mut Pollen,
+    robot_x: f32,
+    robot_y: f32,
+    heading: f32,
+    robot_speed: f32,
+) {
+    let dx = element.x - robot_x;
+    let dy = element.y - robot_y;
+    let local_x = dx * heading.cos() + dy * heading.sin();
+    let local_y = dx * heading.sin() - dy * heading.cos();
+    let closest_x = local_x.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
+    let closest_y = local_y.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
+    let away_x = local_x - closest_x;
+    let away_y = local_y - closest_y;
+    let distance = away_x.hypot(away_y);
+    if distance < element.radius {
+        let (local_nx, local_ny) = if distance > 0.001 {
+            (away_x / distance, away_y / distance)
+        } else if local_x.abs() > local_y.abs() {
+            (local_x.signum(), 0.0)
+        } else {
+            (0.0, local_y.signum().copysign(1.0))
+        };
+        let nx = local_nx * heading.cos() + local_ny * heading.sin();
+        let ny = local_nx * heading.sin() - local_ny * heading.cos();
+        let overlap = element.radius - distance;
+        element.x += nx * (overlap + 0.02);
+        element.y += ny * (overlap + 0.02);
+        let push_speed = robot_speed.max(2.0);
+        let into_robot = element.vx * nx + element.vy * ny;
+        if into_robot < 0.0 {
+            element.vx -= nx * into_robot * 1.25;
+            element.vy -= ny * into_robot * 1.25;
+        }
+        element.vx += nx * push_speed * 0.85;
+        element.vy += ny * push_speed * 0.85;
+    }
 }
 
 fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: HiveSide, tipped: bool) {
