@@ -47,6 +47,52 @@ pub fn interpret(source: &str) -> Program {
         }
     }
 
+    // Explicit ftcCV declarations override name-based motor-role guessing.
+    // The declarations are metadata only; hardwareMap remains the source of
+    // actual motor variables and command execution.
+    let mut declared_roles: Vec<(String, MotorRole)> = Vec::new();
+    let mut next_drive_index = 0usize;
+    for i in 0..tokens.len().saturating_sub(4) {
+        if !tokens[i].ident_is("ftcCV")
+            || !tokens.get(i + 1).is_some_and(|t| t.punct("."))
+            || !tokens.get(i + 2).is_some_and(|t| t.ident_is("hardware"))
+            || !tokens.get(i + 3).is_some_and(|t| t.punct("."))
+            || !tokens.get(i + 4).is_some_and(|t| t.ident_is("motor"))
+            || !tokens.get(i + 5).is_some_and(|t| t.punct("(")) {
+            continue;
+        }
+        let Some(end) = matching(&tokens, i + 5, "(", ")") else { continue; };
+        let args = split_arguments(&tokens[i + 6..end]);
+        let Some(name) = args.first().and_then(|arg| arg.iter().find(|t| t.string)).map(|t| t.text.clone()) else { continue; };
+        let Some(type_arg) = args.get(1) else { continue; };
+        let motor_type = type_arg.iter().rev().find_map(Token::ident).unwrap_or("");
+        let role = match motor_type {
+            "DRIVE" => {
+                let inferred = classify_motor("", &name);
+                let index = match inferred {
+                    MotorRole::Drive(index) => index,
+                    _ => { let index = next_drive_index.min(3); next_drive_index += 1; index }
+                };
+                MotorRole::Drive(index)
+            }
+            "INTAKE" => MotorRole::Intake,
+            "FEEDER" => MotorRole::Feeder,
+            "FLYWHEEL" | "OUTTAKE" => MotorRole::Outtake,
+            _ => MotorRole::Other,
+        };
+        declared_roles.push((name, role));
+    }
+    for motor in &mut program.motors {
+        if let Some((_, role)) = declared_roles.iter().rev().find(|(name, _)| name == &motor.hardware_name) {
+            motor.role = role.clone();
+        }
+    }
+    if !declared_roles.is_empty() {
+        program.diagnostics.push(format!(
+            "Applied {} ftcCV hardware declaration(s).", declared_roles.len()
+        ));
+    }
+
     // Find if(gamepad1.<button>) blocks; braces are balanced from tokens, so
     // nested if statements remain associated with the physical button condition.
     let mut button_blocks: Vec<(String, usize, usize)> = Vec::new();
