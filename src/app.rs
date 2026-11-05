@@ -487,8 +487,10 @@ impl VisualizerApp {
             // only worked reliably when the robot was turned sideways.
             let ly=dx*h.sin()+dy*h.cos();
             // Give the intake a forgiving capture envelope around its front bar.
-            let cx=lx.clamp(-8.5,8.5);
-            let cy=ly.clamp(6.5,12.5);
+            // Intake capture zone starts at the robot's front edge and
+            // extends outward only: 75% of the previous width and 50% height.
+            let cx=lx.clamp(-6.375,6.375);
+            let cy=ly.clamp(9.0,12.0);
             let d=(lx-cx).hypot(ly-cy);
             (d<=e.radius+1.5).then_some((i,d))
         }).min_by(|a,b| a.1.total_cmp(&b.1));
@@ -1372,14 +1374,11 @@ impl VisualizerApp {
             Stroke::new(2.0_f32, Color32::from_rgb(255, 75, 75)),
         ));
 
-        // Intake capture hitbox. The intake checks a rounded rectangle from
-        // x=-8.5..8.5 and y=6.5..12.5, expanded by element radius + 1.5 in.
-        // Draw the largest supported element envelope (1.8 + 1.5 = 3.3 in).
+        // Intake hitbox core: 12.75 in wide and 3 in deep, entirely
+        // outside the chassis. The collision check also allows for element radius.
         let intake_hitbox = [
-            (-8.5, 3.2), (8.5, 3.2), (10.0, 3.7), (11.3, 5.0),
-            (11.8, 6.5), (11.8, 12.5), (11.3, 14.0), (10.0, 15.3),
-            (8.5, 15.8), (-8.5, 15.8), (-10.0, 15.3), (-11.3, 14.0),
-            (-11.8, 12.5), (-11.8, 6.5), (-11.3, 5.0), (-10.0, 3.7),
+            (-6.375, 9.0), (6.375, 9.0),
+            (6.375, 12.0), (-6.375, 12.0),
         ].iter().map(|(x, y)| transform(*x, *y)).collect::<Vec<_>>();
         painter.add(egui::Shape::closed_line(
             intake_hitbox,
