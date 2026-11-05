@@ -6,7 +6,7 @@ use crate::importer::{self, OpModeInfo};
 const FIELD_SIZE_IN: f32 = 144.0;
 const ROBOT_SIZE_IN: f32 = 18.0;
 const MAX_SPEED_IN_S: f32 = 48.0;
-const MAX_TURN_DEG_S: f32 = 180.0;
+const MAX_TURN_DEG_S: f32 = 270.0;
 const MAX_POLLEN: u8 = 4;
 const POLLEN_RADIUS_IN: f32 = 1.4;
 const NECTAR_RADIUS_IN: f32 = 1.8;
@@ -1011,7 +1011,7 @@ impl VisualizerApp {
                         .map(|heading_rad| (90.0 - heading_rad.to_degrees()).rem_euclid(360.0))
                         .unwrap_or_else(|| dx.atan2(dy).to_degrees().rem_euclid(360.0));
                     let heading_delta = (desired_heading - self.heading_deg + 540.0).rem_euclid(360.0) - 180.0;
-                    self.heading_deg = (self.heading_deg + heading_delta * (1.0 - (-8.0 * dt).exp())).rem_euclid(360.0);
+                    self.heading_deg = (self.heading_deg + heading_delta * (1.0 - (-14.0 * dt).exp())).rem_euclid(360.0);
                 }
                 self.resolve_robot_wall_collisions();
                 self.elapsed_seconds += dt;
@@ -1154,7 +1154,7 @@ impl VisualizerApp {
             // Acceleration-limited motor response.
             self.forward_velocity = approach(self.forward_velocity, target_forward * MAX_SPEED_IN_S, 72.0 * dt);
             self.strafe_velocity = approach(self.strafe_velocity, target_strafe * MAX_SPEED_IN_S, 72.0 * dt);
-            self.turn_velocity = approach(self.turn_velocity, target_turn * MAX_TURN_DEG_S, 360.0 * dt);
+            self.turn_velocity = approach(self.turn_velocity, target_turn * MAX_TURN_DEG_S, 540.0 * dt);
 
             let heading = self.heading_deg.to_radians();
             let field_dx = self.strafe_velocity * heading.cos() + self.forward_velocity * heading.sin();
