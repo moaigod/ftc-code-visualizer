@@ -631,7 +631,7 @@ impl VisualizerApp {
                     && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0);
             if inside_untipped_hive { continue; }
 
-            collide_element_with_robot(pollen, self.robot_x, self.robot_y, heading, robot_speed);
+            collide_element_with_robot(pollen, &mut self.robot_x, &mut self.robot_y, heading, robot_speed);
 
             // Invisible hive perimeter walls affect scoring elements only.
             // They keep the starting Nectar inside each untipped hive while
@@ -721,7 +721,7 @@ impl VisualizerApp {
                     || (pollen.hive == Some(HiveSide::Blue)
                         && point_in_hive_cell((pollen.x, pollen.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0));
                 if !inside_untipped_hive {
-                    collide_element_with_robot(pollen, self.robot_x, self.robot_y, self.heading_deg.to_radians(), robot_speed);
+                    collide_element_with_robot(pollen, &mut self.robot_x, &mut self.robot_y, self.heading_deg.to_radians(), robot_speed);
                 }
             }
         }
@@ -1536,13 +1536,13 @@ fn segment_intersects_bounds(
 
 fn collide_element_with_robot(
     element: &mut Pollen,
-    robot_x: f32,
-    robot_y: f32,
+    robot_x: &mut f32,
+    robot_y: &mut f32,
     heading: f32,
     robot_speed: f32,
 ) {
-    let dx = element.x - robot_x;
-    let dy = element.y - robot_y;
+    let dx = element.x - *robot_x;
+    let dy = element.y - *robot_y;
     let local_x = dx * heading.cos() + dy * heading.sin();
     let local_y = dx * heading.sin() - dy * heading.cos();
     let closest_x = local_x.clamp(-ROBOT_SIZE_IN * 0.5, ROBOT_SIZE_IN * 0.5);
@@ -1561,16 +1561,40 @@ fn collide_element_with_robot(
         let nx = local_nx * heading.cos() + local_ny * heading.sin();
         let ny = local_nx * heading.sin() - local_ny * heading.cos();
         let overlap = element.radius - distance;
-        element.x += nx * (overlap + 0.02);
-        element.y += ny * (overlap + 0.02);
-        let push_speed = robot_speed.max(2.0);
+
+        // First try to move the element out of the chassis, but never let
+        // that correction push it beyond the field boundary.
+        let old_x = element.x;
+        let old_y = element.y;
+        let target_x = old_x + nx * (overlap + 0.02);
+        let target_y = old_y + ny * (overlap + 0.02);
+        element.x = target_x.clamp(element.radius, FIELD_SIZE_IN - element.radius);
+        element.y = target_y.clamp(element.radius, FIELD_SIZE_IN - element.radius);
+
+        // If a wall prevents the element from moving far enough, the robot
+        // must yield instead of continuing to drive the element through it.
+        let moved_outward = ((element.x - old_x) * nx + (element.y - old_y) * ny).max(0.0);
+        let blocked_overlap = (overlap - moved_outward).max(0.0);
+        let was_blocked_by_wall =
+            (target_x < element.radius || target_x > FIELD_SIZE_IN - element.radius)
+            || (target_y < element.radius || target_y > FIELD_SIZE_IN - element.radius);
+        if was_blocked_by_wall && blocked_overlap > 0.0 {
+            *robot_x -= nx * (blocked_overlap + 0.02);
+            *robot_y -= ny * (blocked_overlap + 0.02);
+        }
+
+        let push_speed = if was_blocked_by_wall && blocked_overlap > 0.0 {
+            0.0
+        } else {
+            robot_speed.max(2.0) * 0.85
+        };
         let into_robot = element.vx * nx + element.vy * ny;
         if into_robot < 0.0 {
             element.vx -= nx * into_robot * 1.25;
             element.vy -= ny * into_robot * 1.25;
         }
-        element.vx += nx * push_speed * 0.85;
-        element.vy += ny * push_speed * 0.85;
+        element.vx += nx * push_speed;
+        element.vy += ny * push_speed;
     }
 }
 
