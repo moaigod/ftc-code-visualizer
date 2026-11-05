@@ -646,17 +646,6 @@ pub fn interpret_autonomous(source: &str) -> AutonomousPlan {
     plan
 }
 
-fn find_sequential_arguments<'a>(tokens: &'a [Token]) -> Vec<&'a [Token]> {
-    for i in 0..tokens.len().saturating_sub(1) {
-        if tokens[i].ident_is("sequential") && tokens[i + 1].punct("(") {
-            if let Some(end) = matching(tokens, i + 1, "(", ")") {
-                return split_arguments(&tokens[i + 2..end]);
-            }
-        }
-    }
-    Vec::new()
-}
-
 fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(String, Vec<AutonomousMechanismAction>)> {
     let parsed = crate::java_interpreter::parse_java_program(source);
     let mut result = Vec::new();
