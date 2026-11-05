@@ -331,6 +331,7 @@ pub struct AutonomousMechanismAction {
 }
 
 #[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AutonomousPathSegment {
     pub waypoints: Vec<(f32, f32)>,
     pub headings: Vec<Option<f32>>,
