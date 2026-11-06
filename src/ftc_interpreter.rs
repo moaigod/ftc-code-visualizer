@@ -6,8 +6,8 @@
 pub struct PinpointConfig {
     pub hardware_name: String,
     pub pod_type: String,
-    pub x_offset_mm: Option<f32>,
-    pub y_offset_mm: Option<f32>,
+    pub x_offset_in: Option<f32>,
+    pub y_offset_in: Option<f32>,
     pub x_direction_reversed: bool,
     pub y_direction_reversed: bool,
     pub ticks_per_mm: Option<f32>,
@@ -141,7 +141,7 @@ pub fn interpret(source: &str) -> Program {
     }
 
     // Parse optional goBILDA Pinpoint metadata. The API accepts signed pod
-    // offsets in millimeters, pod preset or custom ticks/mm, and encoder directions.
+    // offsets in inches, pod preset or custom ticks/mm, and encoder directions.
     for i in 0..tokens.len().saturating_sub(5) {
         if !tokens[i].ident_is("ftcCV")
             || !tokens.get(i + 1).is_some_and(|t| t.punct("."))
@@ -184,7 +184,7 @@ pub fn interpret(source: &str) -> Program {
             } else { None };
         }
         program.pinpoint = Some(PinpointConfig {
-            hardware_name, pod_type, x_offset_mm: offsets[0], y_offset_mm: offsets[1],
+            hardware_name, pod_type, x_offset_in: offsets[0], y_offset_in: offsets[1],
             x_direction_reversed: directions[0], y_direction_reversed: directions[1],
             ticks_per_mm,
         });
@@ -1111,8 +1111,8 @@ mod ftccv_tests {
             ftcCV.hardware.pinpoint(
                 "pinpoint",
                 ftcCV.PinpointPodType.GOBILDA_4_BAR,
-                -84.0,
-                -168.0,
+                -3.3070866,
+                -6.614173,
                 ftcCV.EncoderDirection.FORWARD,
                 ftcCV.EncoderDirection.REVERSED,
                 null
@@ -1121,8 +1121,8 @@ mod ftccv_tests {
         let program = interpret(source);
         let pinpoint = program.pinpoint.expect("Pinpoint config should be parsed");
         assert_eq!(pinpoint.hardware_name, "pinpoint");
-        assert_eq!(pinpoint.x_offset_mm, Some(-84.0));
-        assert_eq!(pinpoint.y_offset_mm, Some(-168.0));
+        assert_eq!(pinpoint.x_offset_in, Some(-3.3070866));
+        assert_eq!(pinpoint.y_offset_in, Some(-6.614173));
         assert!(!pinpoint.x_direction_reversed);
         assert!(pinpoint.y_direction_reversed);
         assert_eq!(pinpoint.ticks_per_mm, Some(13.2629));
