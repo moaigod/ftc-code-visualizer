@@ -624,6 +624,27 @@ impl VisualizerApp {
         self.pollen_status=format!("{name} fired FIFO. {} element(s) remain.",self.carried_elements.len());
     }
 
+    fn configured_drive_limits(&self) -> (f32, f32) {
+        let source = self.selected_op_mode
+            .and_then(|index| self.op_modes.get(index))
+            .map(|mode| mode.source.as_str())
+            .unwrap_or("");
+        let program = crate::ftc_interpreter::interpret(source);
+        let drive_motors: Vec<_> = program.motors.iter().filter(|motor|
+            matches!(motor.role, crate::ftc_interpreter::MotorRole::Drive(_))
+        ).collect();
+        let rpm_values: Vec<f32> = drive_motors.iter().filter_map(|motor| motor.max_rpm).collect();
+        let acceleration_values: Vec<f32> = drive_motors.iter()
+            .filter_map(|motor| motor.max_acceleration).collect();
+        let average = |values: &[f32], fallback: f32| {
+            if values.is_empty() { fallback }
+            else { values.iter().sum::<f32>() / values.len() as f32 }
+        };
+        let rpm_scale = (average(&rpm_values, 312.0) / 312.0).clamp(0.1, 3.0);
+        let acceleration_scale = (average(&acceleration_values, 2000.0) / 2000.0).clamp(0.1, 4.0);
+        (MAX_SPEED_IN_S * rpm_scale, 280.0 * acceleration_scale)
+    }
+
     fn update_drive_motors(
         &mut self,
         target_forward: f32,
@@ -631,6 +652,7 @@ impl VisualizerApp {
         target_turn_deg_s: f32,
         dt: f32,
     ) {
+        let (max_wheel_speed, wheel_acceleration) = self.configured_drive_limits();
         // Convert chassis commands into individual mecanum wheel speeds.
         // Rotation uses the 9-inch half-width as the effective wheel radius.
         let rotation_speed = target_turn_deg_s.to_radians() * 9.0;
@@ -640,10 +662,10 @@ impl VisualizerApp {
             target_forward - target_strafe + rotation_speed,
             target_forward + target_strafe - rotation_speed,
         ];
-        let largest = raw.iter().fold(MAX_SPEED_IN_S, |m, value| m.max(value.abs()));
-        let scale = (MAX_SPEED_IN_S / largest).min(1.0);
+        let largest = raw.iter().fold(max_wheel_speed, |m, value| m.max(value.abs()));
+        let scale = (max_wheel_speed / largest).min(1.0);
         let targets = raw.map(|value| value * scale);
-        self.drive_wheel_power = targets.map(|value| value / MAX_SPEED_IN_S);
+        self.drive_wheel_power = targets.map(|value| value / max_wheel_speed);
 
         // Each wheel has its own encoder velocity loop and motor acceleration.
         // Encoder resolution is modeled at 28 ticks per inch of wheel travel.
@@ -659,9 +681,9 @@ impl VisualizerApp {
             self.drive_wheel_velocity_integral[i] =
                 (self.drive_wheel_velocity_integral[i] + error * dt).clamp(-80.0, 80.0);
             let correction = 0.18 * error + 0.025 * self.drive_wheel_velocity_integral[i];
-            let motor_command = (targets[i] + correction).clamp(-MAX_SPEED_IN_S, MAX_SPEED_IN_S);
+            let motor_command = (targets[i] + correction).clamp(-max_wheel_speed, max_wheel_speed);
             self.drive_wheel_velocity[i] =
-                approach(self.drive_wheel_velocity[i], motor_command, 280.0 * dt);
+                approach(self.drive_wheel_velocity[i], motor_command, wheel_acceleration * dt);
             self.drive_wheel_encoder_ticks[i] += self.drive_wheel_velocity[i] * dt * 28.0;
         }
 
@@ -1292,8 +1314,9 @@ impl VisualizerApp {
                     (endpoint.0 - self.odometry_x).hypot(endpoint.1 - self.odometry_y);
                 let braking_speed = (2.0 * 120.0 * endpoint_distance.max(0.0)).sqrt();
                 let current_speed = self.forward_velocity.hypot(self.strafe_velocity);
+                let (configured_max_speed, _) = self.configured_drive_limits();
                 let target_speed = (current_speed + 160.0 * dt)
-                    .min(MAX_SPEED_IN_S)
+                    .min(configured_max_speed)
                     .min(braking_speed);
                 if distance > 0.001 {
                     let desired_heading = self.autonomous_headings
@@ -1445,8 +1468,8 @@ impl VisualizerApp {
             // Joystick values are chassis velocity requests. Individual motor
             // controllers, encoders, traction, and mecanum mixing run below.
             self.update_drive_motors(
-                f * MAX_SPEED_IN_S,
-                s * MAX_SPEED_IN_S,
+                f * self.configured_drive_limits().0,
+                s * self.configured_drive_limits().0,
                 r * MAX_TURN_DEG_S,
                 dt,
             );
