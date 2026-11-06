@@ -11,3 +11,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.15"
 gilrs = "0.11"
 rapier2d = "0.36.1"
+rapier3d = "0.36.1"
+glam = "0.30"
+bytemuck = "1.24"
