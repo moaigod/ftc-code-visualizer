@@ -1020,7 +1020,14 @@ impl VisualizerApp {
         // constrained to the field deck for this first migration pass.
         use rapier3d::prelude::{ColliderBuilder as ColliderBuilder3, LockedAxes, PhysicsWorld as PhysicsWorld3, RigidBodyBuilder as RigidBodyBuilder3, Rotation as Rotation3, Vector as Vector3};
         let mut world = PhysicsWorld3::new();
-        world.gravity = Vector3::new(0.0, 0.0, 0.0);
+        // The 3D scene uses inches and gravity along +Z-up coordinates.
+        world.gravity = Vector3::new(0.0, 0.0, -386.09);
+        world.insert_collider(
+            ColliderBuilder3::cuboid(half_field, half_field, 0.5)
+                .translation(Vector3::new(half_field, half_field, -0.5))
+                .friction(self.surface_friction.clamp(0.2, 1.2)),
+            None,
+        );
         // Rapier receives additional internal substeps for fast contacts.
         // This is separate from the fixed 120 Hz game/FTC update cadence.
         let substeps = self.physics_substeps.clamp(1, 8) as usize;
