@@ -1019,6 +1019,7 @@ impl VisualizerApp {
         // Full 3D Rapier world. The robot and loose pieces are 3D colliders,
         // constrained to the field deck for this first migration pass.
         use rapier3d::prelude::{ColliderBuilder as ColliderBuilder3, LockedAxes, PhysicsWorld as PhysicsWorld3, RigidBodyBuilder as RigidBodyBuilder3, Rotation as Rotation3, Vector as Vector3};
+        let half_field = FIELD_SIZE_IN * 0.5;
         let mut world = PhysicsWorld3::new();
         // The 3D scene uses inches and gravity along +Z-up coordinates.
         world.gravity = Vector3::new(0.0, 0.0, -386.09);
@@ -1035,7 +1036,6 @@ impl VisualizerApp {
         world.integration_parameters.num_solver_iterations = 5;
         world.integration_parameters.max_ccd_substeps = 4;
 
-        let half_field = FIELD_SIZE_IN * 0.5;
         let wall_thickness = 0.5;
         for (x, y, half_x, half_y) in [
             (wall_thickness, half_field, wall_thickness, half_field),
