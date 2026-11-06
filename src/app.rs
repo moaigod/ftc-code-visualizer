@@ -1018,7 +1018,7 @@ impl VisualizerApp {
     fn update_loose_pollen_physics_3d(&mut self, dt: f32) {
         // Full 3D Rapier world. The robot and loose pieces are 3D colliders,
         // constrained to the field deck for this first migration pass.
-        use rapier3d::prelude::{ColliderBuilder as ColliderBuilder3, LockedAxes, PhysicsWorld as PhysicsWorld3, RigidBodyBuilder as RigidBodyBuilder3, Rotation as Rotation3, Vector as Vector3};
+        use rapier3d::prelude::{ColliderBuilder as ColliderBuilder3, LockedAxes, PhysicsWorld as PhysicsWorld3, RigidBodyBuilder as RigidBodyBuilder3, Vector as Vector3};
         let half_field = FIELD_SIZE_IN * 0.5;
         let mut world = PhysicsWorld3::new();
         // The 3D scene uses inches and gravity along +Z-up coordinates.
@@ -1059,7 +1059,7 @@ impl VisualizerApp {
         let (robot_body, _) = world.insert(
             RigidBodyBuilder3::dynamic()
                 .translation(Vector3::new(self.robot_x, self.robot_y, 2.5))
-                .rotation(Rotation3::from_axis_angle(&Vector3::z_axis(), -heading))
+                .rotation(Vector3::new(0.0, 0.0, -heading))
                 .linvel(Vector3::new(world_vx, world_vy, 0.0))
                 .angvel(Vector3::new(0.0, 0.0, -self.turn_velocity.to_radians()))
                 .locked_axes(LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Y | LockedAxes::TRANSLATION_LOCKED_Z)
@@ -1137,7 +1137,9 @@ impl VisualizerApp {
         let robot = &world.bodies[robot_body];
         self.robot_x = robot.translation().x;
         self.robot_y = robot.translation().y;
-        self.heading_deg = (-robot.rotation().euler_angles().2).to_degrees().rem_euclid(360.0);
+        let (rotation_axis, rotation_angle) = robot.rotation().to_axis_angle();
+        let signed_z_angle = rotation_angle * rotation_axis.z.signum();
+        self.heading_deg = (-signed_z_angle).to_degrees().rem_euclid(360.0);
         let velocity = robot.linvel();
         let solved_heading = self.heading_deg.to_radians();
         self.forward_velocity = velocity.x * solved_heading.sin()
