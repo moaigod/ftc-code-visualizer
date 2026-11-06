@@ -1,7 +1,5 @@
-use eframe::egui::{self, Rect};
 use eframe::{egui_glow, glow};
 use glam::{Mat4, Vec3};
-use std::sync::Arc;
 
 pub struct FieldRenderer {
     program: glow::Program,
@@ -67,6 +65,7 @@ impl FieldRenderer {
         camera_yaw: f32,
         camera_pitch: f32,
         camera_distance: f32,
+        aspect_ratio: f32,
         robot_x: f32,
         robot_y: f32,
         heading_deg: f32,
@@ -127,7 +126,7 @@ impl FieldRenderer {
             camera_distance*camera_pitch.sin(),
         );
         let view = Mat4::look_at_rh(eye,target,Vec3::Z);
-        let projection = Mat4::perspective_rh_gl(45.0_f32.to_radians(), 1.5, 0.1, 1000.0);
+        let projection = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect_ratio.max(0.1), 0.1, 1000.0);
         let view_projection = projection * view;
 
         unsafe {
