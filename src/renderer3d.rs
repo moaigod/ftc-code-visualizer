@@ -95,7 +95,8 @@ impl FieldRenderer {
             mesh.beam([i as f32,1.5,0.055],[i as f32,142.5,0.055],0.035,0.035,[0.42,0.43,0.40]);
             mesh.beam([1.5,i as f32,0.055],[142.5,i as f32,0.055],0.035,0.035,[0.42,0.43,0.40]);
         }
-        // Alliance markings are thin perimeter tape only; no solid floor panels.\n        mesh.beam([4.0,4.0,0.12],[37.0,4.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
+        // Alliance markings are thin perimeter tape only; no solid floor panels.
+        mesh.beam([4.0,4.0,0.12],[37.0,4.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
         mesh.beam([4.0,16.0,0.12],[37.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
         mesh.beam([4.0,4.0,0.12],[4.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
         mesh.beam([37.0,4.0,0.12],[37.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
@@ -159,7 +160,9 @@ impl FieldRenderer {
             mesh.beam([x+10.5,y+6.5,17.5],[x-10.5,y+6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
             mesh.beam([x-10.5,y+6.5,17.5],[x-10.5,y-6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
         }
-        // Flower pollen remains represented by the live game-piece data only;\n        // do not create separate decorative flower props at pollen spawn points.\n        for (x,y,r,color) in pieces {
+        // Flower pollen remains represented by the live game-piece data only;
+        // do not create separate decorative flower props at pollen spawn points.
+        for (x,y,r,color) in pieces {
             mesh.sphere([*x,*y,*r],[*r,*r,*r],*color);
         }
         let h = heading_deg.to_radians();
