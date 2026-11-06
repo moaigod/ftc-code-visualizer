@@ -1898,7 +1898,7 @@ impl VisualizerApp {
         let (response, painter) = ui.allocate_painter(available, Sense::drag());
         let rect = response.rect;
         if response.dragged() {
-            let delta = response.drag_delta();
+            let delta = response.drag_motion();
             self.camera_yaw += delta.x * 0.008;
             self.camera_pitch = (self.camera_pitch - delta.y * 0.006).clamp(0.18, 1.30);
         }
