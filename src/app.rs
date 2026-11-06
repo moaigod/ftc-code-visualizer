@@ -782,6 +782,10 @@ impl VisualizerApp {
     }
 
     fn update_loose_pollen_physics(&mut self, dt: f32) {
+        if self.three_d_mode {
+            self.update_loose_pollen_physics_3d(dt);
+            return;
+        }
         // Rapier uses inches as world units. The robot is an 18 x 18 in,
         // approximately 18 kg rigid body; loose game pieces are light,
         // round dynamic bodies. The field perimeter is represented by fixed walls.
@@ -902,6 +906,238 @@ impl VisualizerApp {
         self.strafe_velocity = velocity.x * solved_heading.cos()
             - velocity.y * solved_heading.sin();
         self.turn_velocity = -robot.angvel().to_degrees();
+
+        // Rapier resolves robot-to-element and element-to-element contacts,
+        // including momentum transfer. Continuous collision detection prevents
+        // fast-moving pieces from passing through the chassis or field walls.
+        for (index, body_handle) in element_bodies {
+            let body = &world.bodies[body_handle];
+            if let Some(element) = self.field_pollen.get_mut(index) {
+                element.x = body.translation().x;
+                element.y = body.translation().y;
+                element.vx = body.linvel().x;
+                element.vy = body.linvel().y;
+            }
+        }
+
+        // Preserve the BioBuzz-specific hive behavior on top of the general
+        // rigid-body simulation: scored pieces stay inside their active cell,
+        // while unscored pieces bounce off the scoring-cell perimeter.
+        for element in &mut self.field_pollen {
+            if element.from_flower {
+                continue;
+            }
+            if element.scored {
+                element.x += element.vx * dt;
+                element.y += element.vy * dt;
+                let friction = (1.0 - 1.7 * dt).max(0.0);
+                element.vx *= friction;
+                element.vy *= friction;
+                let center = match element.hive {
+                    Some(HiveSide::Red) => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
+                    Some(HiveSide::Blue) => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
+                    None => continue,
+                };
+                let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
+                let min_x = min_x + element.radius;
+                let max_x = max_x - element.radius;
+                let min_y = min_y + element.radius;
+                let max_y = max_y - element.radius;
+                if element.x < min_x { element.x = min_x; element.vx = element.vx.abs() * 0.45; }
+                if element.x > max_x { element.x = max_x; element.vx = -element.vx.abs() * 0.45; }
+                if element.y < min_y { element.y = min_y; element.vy = element.vy.abs() * 0.45; }
+                if element.y > max_y { element.y = max_y; element.vy = -element.vy.abs() * 0.45; }
+                continue;
+            }
+
+            let (red_untipped, red_tipped) = hive_pair_centers(HiveSide::Red, self.red_hive_tipped);
+            let (blue_untipped, blue_tipped) = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped);
+            collide_element_with_hive(element, red_untipped, HiveSide::Red, false);
+            collide_element_with_hive(element, red_tipped, HiveSide::Red, true);
+            collide_element_with_hive(element, blue_untipped, HiveSide::Blue, false);
+            collide_element_with_hive(element, blue_tipped, HiveSide::Blue, true);
+
+            // A final numerical guard keeps all loose objects within the legal field.
+            let min_x = element.radius.max(0.0);
+            let max_x = FIELD_SIZE_IN - element.radius.max(0.0);
+            let min_y = element.radius.max(0.0);
+            let max_y = FIELD_SIZE_IN - element.radius.max(0.0);
+            if element.x < min_x { element.x = min_x; element.vx = element.vx.abs() * 0.45; }
+            if element.x > max_x { element.x = max_x; element.vx = -element.vx.abs() * 0.45; }
+            if element.y < min_y { element.y = min_y; element.vy = element.vy.abs() * 0.45; }
+            if element.y > max_y { element.y = max_y; element.vy = -element.vy.abs() * 0.45; }
+        }
+
+        // Scored elements still collide with one another inside their hive.
+        for i in 0..self.field_pollen.len() {
+            for j in (i + 1)..self.field_pollen.len() {
+                let (left, right) = self.field_pollen.split_at_mut(j);
+                let a = &mut left[i];
+                let b = &mut right[0];
+                if !a.scored || !b.scored || a.hive.is_none() || a.hive != b.hive {
+                    continue;
+                }
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+                let distance = dx.hypot(dy);
+                let minimum = a.radius + b.radius;
+                if distance > 0.001 && distance < minimum {
+                    let nx = dx / distance;
+                    let ny = dy / distance;
+                    let overlap = (minimum - distance) * 0.5;
+                    a.x -= nx * overlap;
+                    a.y -= ny * overlap;
+                    b.x += nx * overlap;
+                    b.y += ny * overlap;
+                    let relative = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+                    if relative > 0.0 {
+                        a.vx -= nx * relative * 0.55;
+                        a.vy -= ny * relative * 0.55;
+                        b.vx += nx * relative * 0.55;
+                        b.vy += ny * relative * 0.55;
+                    }
+                }
+            }
+        }
+
+        // Clamp scored pieces after pairwise separation so crowded hives cannot
+        // push them through the scoring-zone boundary.
+        for element in &mut self.field_pollen {
+            if !element.scored { continue; }
+            let center = match element.hive {
+                Some(HiveSide::Red) => hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0,
+                Some(HiveSide::Blue) => hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0,
+                None => continue,
+            };
+            let (min_x, max_x, min_y, max_y) = hive_cell_bounds(center);
+            element.x = element.x.clamp(min_x + element.radius, max_x - element.radius);
+            element.y = element.y.clamp(min_y + element.radius, max_y - element.radius);
+        }
+    }
+
+    fn update_loose_pollen_physics_3d(&mut self, dt: f32) {
+        // Full 3D Rapier world. The robot and loose pieces are 3D colliders,
+        // constrained to the field deck for this first migration pass.
+        use rapier3d::prelude::{ColliderBuilder as ColliderBuilder3, LockedAxes, PhysicsWorld as PhysicsWorld3, RigidBodyBuilder as RigidBodyBuilder3, Rotation as Rotation3, Vector as Vector3};
+        let mut world = PhysicsWorld3::new();
+        world.gravity = Vector3::new(0.0, 0.0, 0.0);
+        // Rapier receives additional internal substeps for fast contacts.
+        // This is separate from the fixed 120 Hz game/FTC update cadence.
+        let substeps = self.physics_substeps.clamp(1, 8) as usize;
+        world.integration_parameters.dt = dt / substeps as f32;
+        world.integration_parameters.num_solver_iterations = 5;
+        world.integration_parameters.max_ccd_substeps = 4;
+
+        let half_field = FIELD_SIZE_IN * 0.5;
+        let wall_thickness = 0.5;
+        for (x, y, half_x, half_y) in [
+            (wall_thickness, half_field, wall_thickness, half_field),
+            (FIELD_SIZE_IN - wall_thickness, half_field, wall_thickness, half_field),
+            (half_field, wall_thickness, half_field, wall_thickness),
+            (half_field, FIELD_SIZE_IN - wall_thickness, half_field, wall_thickness),
+        ] {
+            world.insert_collider(
+                ColliderBuilder3::cuboid(half_x, half_y, 3.0)
+                    .translation(Vector3::new(x, y, 3.0))
+                    .friction(self.surface_friction.clamp(0.2, 1.2)),
+                None,
+            );
+        }
+
+        let heading = self.heading_deg.to_radians();
+        let world_vx = self.strafe_velocity * heading.cos()
+            + self.forward_velocity * heading.sin();
+        let world_vy = -self.strafe_velocity * heading.sin()
+            + self.forward_velocity * heading.cos();
+        let (robot_body, _) = world.insert(
+            RigidBodyBuilder3::dynamic()
+                .translation(Vector3::new(self.robot_x, self.robot_y, 2.5))
+                .rotation(Rotation3::from_axis_angle(&Vector3::z_axis(), -heading))
+                .linvel(Vector3::new(world_vx, world_vy, 0.0))
+                .angvel(Vector3::new(0.0, 0.0, -self.turn_velocity.to_radians()))
+                .locked_axes(LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Y | LockedAxes::TRANSLATION_LOCKED_Z)
+                .linear_damping(0.04)
+                .angular_damping(0.08)
+                .ccd_enabled(true),
+            ColliderBuilder3::cuboid(9.0, 9.0, 2.5)
+                .density(0.0556)
+                .friction(self.surface_friction.clamp(0.2, 1.2))
+                .restitution(0.025),
+        );
+
+        let mut element_bodies = Vec::new();
+        for (index, element) in self.field_pollen.iter().enumerate() {
+            // Flower pollen is fixed in its flower until the intake
+            // physically reaches it. It should not be pushed around by the
+            // robot or by other loose pieces while waiting to be collected.
+            if element.scored || element.from_flower {
+                continue;
+            }
+            // Starting Nectar inside an untipped hive is intentionally staged:
+            // it is not a loose collision object until its cell tips.
+            let inside_untipped_hive =
+                (element.hive == Some(HiveSide::Red)
+                    && point_in_hive_cell((element.x, element.y), hive_pair_centers(HiveSide::Red, self.red_hive_tipped).0))
+                || (element.hive == Some(HiveSide::Blue)
+                    && point_in_hive_cell((element.x, element.y), hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped).0));
+            if inside_untipped_hive {
+                continue;
+            }
+
+            let mut element_vx = element.vx;
+            let mut element_vy = element.vy;
+            if self.intake_running && self.intake_motor_velocity > 80.0 {
+                let heading = self.heading_deg.to_radians();
+                let mouth_x = self.robot_x + heading.sin() * 9.5;
+                let mouth_y = self.robot_y + heading.cos() * 9.5;
+                let dx = mouth_x - element.x;
+                let dy = mouth_y - element.y;
+                let distance = dx.hypot(dy);
+                let relative_x = dx * heading.cos() + dy * heading.sin();
+                let relative_y = -dx * heading.sin() + dy * heading.cos();
+                // Intake airflow is local to the mouth, not a field-wide
+                // attraction force. Keep the capture cone narrow and require
+                // the element to be close to the front of the chassis.
+                if distance > 0.01 && distance < 6.0 && relative_x.abs() < 7.0 && relative_y > 5.0 {
+                    let pull = (self.intake_motor_velocity / 1800.0).clamp(0.0, 1.0);
+                    let acceleration = 18.0 * pull * (1.0 - distance / 6.0).max(0.0);
+                    element_vx += dx / distance * acceleration * dt;
+                    element_vy += dy / distance * acceleration * dt;
+                }
+            }
+            let (body, _) = world.insert(
+                RigidBodyBuilder3::dynamic()
+                    .translation(Vector3::new(element.x, element.y, element.radius))
+                    .linvel(Vector3::new(element_vx, element_vy, 0.0))
+                    .locked_axes(LockedAxes::TRANSLATION_LOCKED_Z | LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Y | LockedAxes::ROTATION_LOCKED_Z)
+                    // Match the loose-element rolling resistance used by the
+                    // previous field model so pieces naturally settle.
+                    .linear_damping(2.8)
+                    .ccd_enabled(true),
+                ColliderBuilder3::ball(element.radius)
+                    .density(0.02)
+                    .friction(self.element_friction.clamp(0.1, 1.2))
+                    .restitution(self.element_restitution.clamp(0.0, 0.8)),
+            );
+            element_bodies.push((index, body));
+        }
+
+        for _ in 0..substeps {
+            world.step();
+        }
+
+        // Read the solved chassis pose and velocity back into the FTC simulator.
+        let robot = &world.bodies[robot_body];
+        self.robot_x = robot.translation().x;
+        self.robot_y = robot.translation().y;
+        self.heading_deg = (-robot.rotation().euler_angles().2).to_degrees().rem_euclid(360.0);
+        let velocity = robot.linvel();
+        let solved_heading = self.heading_deg.to_radians();
+        self.forward_velocity = velocity.x * solved_heading.sin()
+            + velocity.y * solved_heading.cos();
+        self.strafe_velocity = velocity.x * solved_heading.cos()
+            - velocity.y * solved_heading.sin();
+        self.turn_velocity = -robot.angvel().z.to_degrees();
 
         // Rapier resolves robot-to-element and element-to-element contacts,
         // including momentum transfer. Continuous collision detection prevents
