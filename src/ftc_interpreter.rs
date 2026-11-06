@@ -159,29 +159,20 @@ pub fn interpret(source: &str) -> Program {
         let pod_type = args.get(1)
             .map(|arg| tokens_to_text(arg))
             .unwrap_or_else(|| "CUSTOM".to_owned());
-        let mut offsets = [None, None];
-        let mut directions = [false, false];
-        let mut ticks_per_mm = None;
+        let mut offsets = [
+            args.get(2).and_then(|arg| resolve_number(source, &tokens_to_text(arg))),
+            args.get(3).and_then(|arg| resolve_number(source, &tokens_to_text(arg))),
+        ];
+        let mut directions = [
+            args.get(4).is_some_and(|arg| tokens_to_text(arg).to_ascii_uppercase().contains("REVERSE")),
+            args.get(5).is_some_and(|arg| tokens_to_text(arg).to_ascii_uppercase().contains("REVERSE")),
+        ];
+        let mut ticks_per_mm = args.get(6)
+            .and_then(|arg| resolve_number(source, &tokens_to_text(arg)));
         for arg in args.iter().skip(2) {
-            let text = tokens_to_text(arg);
-            let normalized = text.to_ascii_uppercase();
-            if normalized.contains("XOFFSET") || normalized.contains("X_OFFSET") {
-                offsets[0] = arg.iter().rev().find_map(|t| t.text.parse::<f32>().ok());
-            } else if normalized.contains("YOFFSET") || normalized.contains("Y_OFFSET") {
-                offsets[1] = arg.iter().rev().find_map(|t| t.text.parse::<f32>().ok());
-            }
-            if normalized.contains("XREVERSED") || normalized.contains("X_REVERSED") {
-                directions[0] = normalized.contains("TRUE");
-            } else if normalized.contains("YREVERSED") || normalized.contains("Y_REVERSED") {
-                directions[1] = normalized.contains("TRUE");
-            }
+            let normalized = tokens_to_text(arg).to_ascii_uppercase();
             if normalized.contains("TICKSPERMM") || normalized.contains("TICKS_PER_MM") {
                 ticks_per_mm = arg.iter().rev().find_map(|t| t.text.parse::<f32>().ok());
-            }
-            if normalized.contains("REVERSED") && !normalized.contains("XREVERSED")
-                && !normalized.contains("YREVERSED") {
-                if normalized.contains("X") { directions[0] = true; }
-                if normalized.contains("Y") { directions[1] = true; }
             }
         }
         let pod_upper = pod_type.to_ascii_uppercase();
