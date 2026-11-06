@@ -75,30 +75,81 @@ impl FieldRenderer {
     ) {
         use glow::HasContext as _;
         let mut mesh = Mesh::default();
-        mesh.cuboid([72.0,72.0,-0.7],[72.0,72.0,0.7],[0.18,0.23,0.22]);
-        // Field perimeter walls: 144 x 144 inches, six inches high.
-        mesh.cuboid([72.0,-0.25,3.0],[72.0,0.5,3.0],[0.30,0.34,0.36]);
-        mesh.cuboid([72.0,144.25,3.0],[72.0,0.5,3.0],[0.30,0.34,0.36]);
-        mesh.cuboid([-0.25,72.0,3.0],[0.5,72.0,3.0],[0.30,0.34,0.36]);
-        mesh.cuboid([144.25,72.0,3.0],[0.5,72.0,3.0],[0.30,0.34,0.36]);
-        for i in (0..=144).step_by(12) {
-            let c = if i % 24 == 0 { [0.40,0.45,0.43] } else { [0.29,0.34,0.32] };
-            mesh.cuboid([i as f32,72.0,0.02],[0.035,72.0,0.025],c);
-            mesh.cuboid([72.0,i as f32,0.02],[72.0,0.035,0.025],c);
+        // A dark green competition-floor surround sits outside the 12 ft square tile.
+        mesh.cuboid([72.0,72.0,-1.25],[94.0,94.0,0.45],[0.10,0.17,0.10]);
+        // 144 x 144 in light-gray field deck with a slightly raised edge lip.
+        mesh.cuboid([72.0,72.0,-0.25],[72.0,72.0,0.25],[0.48,0.49,0.46]);
+        mesh.cuboid([72.0,72.0,0.10],[71.2,71.2,0.06],[0.53,0.54,0.51]);
+        // Perimeter wall panels and continuous dark top rails.
+        for (x,y,hx,hy) in [(72.0,0.0,72.0,0.65),(72.0,144.0,72.0,0.65),(0.0,72.0,0.65,72.0),(144.0,72.0,0.65,72.0)] {
+            mesh.cuboid([x,y,2.4],[hx,hy,2.4],[0.12,0.14,0.13]);
         }
-        // Raised center structure. Its dimensions remain a placeholder pending a field CAD reference.
-        for (x,y) in [(62.0,62.0),(82.0,62.0),(82.0,82.0),(62.0,82.0)] {
-            mesh.cuboid([x,y,6.5],[0.55,0.55,6.5],[0.72,0.73,0.68]);
+        for (z,w,c) in [(4.8,0.65,[0.035,0.045,0.04]),(5.35,0.16,[0.24,0.27,0.24])] {
+            mesh.beam([0.0,0.0,z],[144.0,0.0,z],w,w,c);
+            mesh.beam([0.0,144.0,z],[144.0,144.0,z],w,w,c);
+            mesh.beam([0.0,0.0,z],[0.0,144.0,z],w,w,c);
+            mesh.beam([144.0,0.0,z],[144.0,144.0,z],w,w,c);
         }
-        for z in [4.0,9.0,13.0] {
-            mesh.cuboid([72.0,62.0,z],[10.0,0.35,0.35],[0.72,0.73,0.68]);
-            mesh.cuboid([72.0,82.0,z],[10.0,0.35,0.35],[0.72,0.73,0.68]);
-            mesh.cuboid([62.0,72.0,z],[0.35,10.0,0.35],[0.72,0.73,0.68]);
-            mesh.cuboid([82.0,72.0,z],[0.35,10.0,0.35],[0.72,0.73,0.68]);
+        // Subtle deck seams and boundary markings.
+        for i in (12..144).step_by(12) {
+            mesh.beam([i as f32,1.5,0.055],[i as f32,142.5,0.055],0.035,0.035,[0.42,0.43,0.40]);
+            mesh.beam([1.5,i as f32,0.055],[142.5,i as f32,0.055],0.035,0.035,[0.42,0.43,0.40]);
         }
-        for (x,y) in [(96.5,1.4),(142.6,96.5),(47.5,142.6),(1.4,47.5)] {
-            mesh.cuboid([x,y,0.8],[5.0,5.0,0.8],[0.55,0.42,0.18]);
-            mesh.cylinder([x,y,1.8],2.7,0.8,[0.95,0.75,0.12]);
+        // Alliance driver-station / protected-zone floor tape at opposite ends.
+        mesh.quad([4.0,4.0,0.08],[37.0,4.0,0.08],[37.0,16.0,0.08],[4.0,16.0,0.08],[0.10,0.28,0.95]);
+        mesh.quad([4.0,128.0,0.08],[37.0,128.0,0.08],[37.0,140.0,0.08],[4.0,140.0,0.08],[0.92,0.12,0.15]);
+        mesh.beam([4.0,4.0,0.12],[37.0,4.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
+        mesh.beam([4.0,16.0,0.12],[37.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
+        mesh.beam([4.0,4.0,0.12],[4.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
+        mesh.beam([37.0,4.0,0.12],[37.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
+        mesh.beam([4.0,128.0,0.12],[37.0,128.0,0.12],0.18,0.18,[0.95,0.08,0.12]);
+        mesh.beam([4.0,140.0,0.12],[37.0,140.0,0.12],0.18,0.18,[0.95,0.08,0.12]);
+        mesh.beam([4.0,128.0,0.12],[4.0,140.0,0.12],0.18,0.18,[0.95,0.08,0.12]);
+        mesh.beam([37.0,128.0,0.12],[37.0,140.0,0.12],0.18,0.18,[0.95,0.08,0.12]);
+
+        // Central elevated truss: four splayed legs, cross-bracing, top rails,
+        // and a central suspended support frame.
+        let base = [[50.0,50.0,0.35],[94.0,50.0,0.35],[94.0,94.0,0.35],[50.0,94.0,0.35]];
+        let upper = [[64.0,64.0,22.0],[80.0,64.0,22.0],[80.0,80.0,22.0],[64.0,80.0,22.0]];
+        for i in 0..4 {
+            mesh.beam(base[i],upper[i],0.72,0.72,[0.56,0.58,0.55]);
+            mesh.beam(base[i],base[(i+1)%4],0.42,0.42,[0.38,0.40,0.38]);
+            mesh.beam(upper[i],upper[(i+1)%4],0.55,0.55,[0.65,0.66,0.62]);
+        }
+        for i in 0..4 {
+            mesh.beam(base[i],upper[(i+1)%4],0.20,0.20,[0.43,0.45,0.42]);
+        }
+        // Upper rectangular truss rails and short hanging brackets.
+        mesh.beam([60.0,72.0,23.0],[84.0,72.0,23.0],0.42,0.42,[0.62,0.64,0.60]);
+        mesh.beam([72.0,60.0,23.0],[72.0,84.0,23.0],0.42,0.42,[0.62,0.64,0.60]);
+        mesh.beam([66.0,72.0,22.0],[66.0,72.0,17.0],0.28,0.28,[0.50,0.52,0.49]);
+        mesh.beam([78.0,72.0,22.0],[78.0,72.0,17.0],0.28,0.28,[0.50,0.52,0.49]);
+
+        // Opposing elevated alliance baskets: rectangular colored rims, mesh-like
+        // lower trays, and angled braces. These are visual field elements.
+        for (center,color,edge) in [
+            ([72.0,61.5,18.0],[0.08,0.20,0.88],[0.12,0.32,1.0]),
+            ([72.0,82.5,18.0],[0.86,0.10,0.12],[1.0,0.22,0.18])
+        ] {
+            let (x,y,z)=(center[0],center[1],center[2]);
+            mesh.beam([x-8.0,y-4.0,z+2.0],[x+8.0,y-4.0,z+2.0],0.38,0.38,edge);
+            mesh.beam([x+8.0,y-4.0,z+2.0],[x+8.0,y+4.0,z+2.0],0.38,0.38,edge);
+            mesh.beam([x+8.0,y+4.0,z+2.0],[x-8.0,y+4.0,z+2.0],0.38,0.38,edge);
+            mesh.beam([x-8.0,y+4.0,z+2.0],[x-8.0,y-4.0,z+2.0],0.38,0.38,edge);
+            mesh.cuboid([x,y,z],[7.2,3.2,0.35],color);
+            for j in -3..=3 {
+                mesh.beam([x+j as f32*2.0,y-3.0,z-0.7],[x+j as f32*2.0,y+3.0,z-0.7],0.07,0.07,[0.72,0.74,0.70]);
+            }
+            mesh.beam([x-7.0,y,z-1.0],[x-4.0,y,z-5.0],0.22,0.22,[0.50,0.52,0.49]);
+            mesh.beam([x+7.0,y,z-1.0],[x+4.0,y,z-5.0],0.22,0.22,[0.50,0.52,0.49]);
+        }
+
+        // Four field-side green posts with yellow caps and small base plates.
+        for (x,y) in [(25.0,20.0),(119.0,20.0),(25.0,124.0),(119.0,124.0)] {
+            mesh.cuboid([x,y,0.65],[2.0,2.0,0.65],[0.12,0.17,0.12]);
+            mesh.cylinder([x,y,5.2],0.85,4.0,[0.04,0.62,0.20]);
+            mesh.cylinder([x,y,9.5],1.05,0.35,[0.95,0.78,0.08]);
+            mesh.cylinder([x,y,10.2],0.35,0.35,[0.96,0.90,0.22]);
         }
         for (x,y) in red_hives {
             mesh.cuboid([x,y,1.25],[11.0,7.0,1.25],[0.66,0.18,0.20]);
@@ -205,6 +256,17 @@ impl Mesh {
                 self.quad(point(a0,b0),point(a0,b1),point(a1,b1),point(a1,b0),color);
             }
         }
+    }
+    fn beam(&mut self,a:[f32;3],b:[f32;3],half_width:f32,half_depth:f32,color:[f32;3]) {
+        let av=Vec3::from_array(a); let bv=Vec3::from_array(b);
+        let axis=(bv-av).normalize_or_zero();
+        if axis.length_squared()<0.5 { return; }
+        let reference=if axis.z.abs()<0.92 { Vec3::Z } else { Vec3::Y };
+        let side=axis.cross(reference).normalize()*half_width;
+        let up=axis.cross(side).normalize()*half_depth;
+        let p=[av-side-up,av+side-up,av+side+up,av-side+up,
+               bv-side-up,bv+side-up,bv+side+up,bv-side+up];
+        self.cuboid_from_points(p.map(|v|v.to_array()),color);
     }
     fn cylinder(&mut self,c:[f32;3],radius:f32,half_height:f32,color:[f32;3]) {
         let n=16;
