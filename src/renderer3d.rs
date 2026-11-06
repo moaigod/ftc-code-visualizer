@@ -122,12 +122,18 @@ impl FieldRenderer {
         mesh.beam([66.0,72.0,22.0],[66.0,72.0,17.0],0.28,0.28,[0.50,0.52,0.49]);
         mesh.beam([78.0,72.0,22.0],[78.0,72.0,17.0],0.28,0.28,[0.50,0.52,0.49]);
 
-        // Four field-side green posts with yellow caps and small base plates.
-        for (x,y) in [(25.0,20.0),(119.0,20.0),(25.0,124.0),(119.0,124.0)] {
-            mesh.cuboid([x,y,0.65],[2.0,2.0,0.65],[0.12,0.17,0.12]);
-            mesh.cylinder([x,y,5.2],0.85,4.0,[0.04,0.62,0.20]);
-            mesh.cylinder([x,y,9.5],1.05,0.35,[0.95,0.78,0.08]);
-            mesh.cylinder([x,y,10.2],0.35,0.35,[0.96,0.90,0.22]);
+        // Four tall green/yellow field towers, repositioned to the locations
+        // visible in the reference photograph rather than the four flower-spawn
+        // coordinates. Coordinates are estimated from the photo's field corners.
+        for (x,y) in [(24.5,135.0),(118.5,126.0),(98.5,33.0),(8.0,66.0)] {
+            // Broad dark mounting foot and narrow green upright.
+            mesh.cuboid([x,y,0.8],[2.5,2.5,0.8],[0.10,0.14,0.11]);
+            mesh.cylinder([x,y,6.2],1.05,5.4,[0.035,0.55,0.17]);
+            // Yellow top collar and cap, clearly visible from the elevated camera.
+            mesh.cylinder([x,y,11.8],1.35,0.55,[0.94,0.72,0.06]);
+            mesh.cylinder([x,y,12.7],0.72,0.42,[0.98,0.86,0.16]);
+            // Small yellow side brackets at the upper end of each tower.
+            mesh.beam([x-1.1,y,10.8],[x+1.1,y,10.8],0.20,0.20,[0.98,0.78,0.08]);
         }
         // The four hive cells use the exact gameplay coordinates from the 2D
         // model. Each scoring tray is visibly elevated, with four narrow legs.
@@ -153,25 +159,7 @@ impl FieldRenderer {
             mesh.beam([x+10.5,y+6.5,17.5],[x-10.5,y+6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
             mesh.beam([x-10.5,y+6.5,17.5],[x-10.5,y-6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
         }
-        // Flower stations are placed at the exact four 2D field pollen
-        // coordinates: (96.5,1.4), (142.6,96.5), (47.5,142.6), (1.4,47.5).
-        // Low green stems and red flower heads replace guessed station locations.
-        for (x,y,angle) in [
-            (96.5,1.4,0.0),
-            (142.6,96.5,std::f32::consts::FRAC_PI_2),
-            (47.5,142.6,std::f32::consts::PI),
-            (1.4,47.5,-std::f32::consts::FRAC_PI_2)
-        ] {
-            mesh.cylinder([x,y,1.1],0.45,1.0,[0.10,0.40,0.13]);
-            mesh.beam([x,y,1.5],[x,y,5.0],0.20,0.20,[0.10,0.48,0.16]);
-            mesh.cylinder([x,y,5.2],1.2,0.30,[0.78,0.08,0.10]);
-            for petal in 0..5 {
-                let a=angle+std::f32::consts::TAU*petal as f32/5.0;
-                mesh.sphere([x+a.cos()*1.25,y+a.sin()*1.25,5.25],[0.85,0.55,0.28],[0.90,0.12,0.13]);
-            }
-            mesh.sphere([x,y,5.55],[0.52,0.52,0.35],[0.96,0.78,0.10]);
-        }
-        for (x,y,r,color) in pieces {
+        // Flower pollen remains represented by the live game-piece data only;\n        // do not create separate decorative flower props at pollen spawn points.\n        for (x,y,r,color) in pieces {
             mesh.sphere([*x,*y,*r],[*r,*r,*r],*color);
         }
         let h = heading_deg.to_radians();
