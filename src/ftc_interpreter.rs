@@ -1004,3 +1004,52 @@ fn resolve_angle(source: &str, tokens: &[Token]) -> Option<f32> {
     }
     resolve_number(source, &expression)
 }
+
+
+#[cfg(test)]
+mod ftccv_tests {
+    use super::*;
+
+    #[test]
+    fn parses_formatted_ftccv_motor_options_and_matches_hardware_names() {
+        let source = r#"
+            class RobotConfig {
+                void configure() {
+                    ftcCV
+                        .hardware
+                        .motor(
+                            "FL",
+                            ftcCV.MotorType.DRIVE,
+                            ftcCV.Direction.REVERSE,
+                            ftcCV.maxRPM(312),
+                            ftcCV.maxAcceleration(2000)
+                        );
+                }
+            }
+            class TestOpMode {
+                DcMotorEx frontLeft;
+                void init() {
+                    frontLeft = hardwareMap.get(DcMotorEx.class, "FL");
+                }
+            }
+        "#;
+        let program = interpret(source);
+        let motor = program.motors.iter().find(|motor| motor.variable == "frontLeft").unwrap();
+        assert_eq!(motor.role, MotorRole::Drive(0));
+        assert_eq!(motor.max_rpm, Some(312.0));
+        assert_eq!(motor.max_acceleration, Some(2000.0));
+        assert!(motor.reversed);
+        assert!(program.diagnostics.iter().any(|line| line.contains("matched 1")));
+    }
+
+    #[test]
+    fn reports_ftccv_hardware_names_that_do_not_match_hardware_map() {
+        let source = r#"
+            ftcCV.hardware.motor("intakeMotor", ftcCV.MotorType.INTAKE);
+            DcMotor intake;
+            intake = hardwareMap.get(DcMotor.class, "Intake");
+        "#;
+        let program = interpret(source);
+        assert!(program.diagnostics.iter().any(|line| line.contains("no matching hardwareMap")));
+    }
+}
