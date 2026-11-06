@@ -2838,4 +2838,10 @@ impl eframe::App for VisualizerApp {
             }
         }
     }
+    
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        if let (Some(gl), Some(renderer)) = (gl, self.renderer_3d.as_ref()) {
+            renderer.lock().destroy(gl);
+        }
+    }
 }
