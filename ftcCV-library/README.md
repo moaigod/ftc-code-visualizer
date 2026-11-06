@@ -47,9 +47,19 @@ ftcCV.hardware.motor(
 - `OUTTAKE`
 - `OTHER`
 
-Mechanism-specific values are optional. If omitted, the visualizer should use
-its generic simulation defaults and continue to infer behavior from ordinary
-FTC code where possible.
+Mechanism-specific values are optional. The visualizer matches each declaration
+to a `hardwareMap` motor by the exact configured hardware name.
+
+- `maxRPM(value)` sets the motor's configured free-speed limit.
+- `maxAcceleration(value)` sets its acceleration limit.
+- `Direction.FORWARD` and `Direction.REVERSE` are retained as motor direction metadata.
+
+The drivetrain model uses 312 RPM and 2000 acceleration units as its calibration
+reference; the flywheel model uses 6000 RPM and 3500 acceleration units. Values
+are scaled relative to those references. Motors without settings retain the
+built-in defaults. The current simulator models chassis-level mecanum movement,
+so direction metadata is shown in the detected-hardware panel rather than
+simulating individual wiring polarity.
 
 ## Separation
 
