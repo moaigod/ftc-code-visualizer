@@ -7,6 +7,11 @@ pub struct Motor {
     pub variable: String,
     pub hardware_name: String,
     pub role: MotorRole,
+    /// Optional ftcCV motor free-speed metadata, in RPM.
+    pub max_rpm: Option<f32>,
+    /// Optional ftcCV acceleration metadata, preserved in the units supplied by the user.
+    pub max_acceleration: Option<f32>,
+    pub reversed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -43,16 +48,15 @@ pub fn interpret(source: &str) -> Program {
         let Some(name) = tokens[eq + 2..end].iter().find(|t| t.string).map(|t| t.text.clone()) else { continue; };
         if !program.motors.iter().any(|m| m.variable == variable) {
             let role = classify_motor(&variable, &name);
-            program.motors.push(Motor { variable, hardware_name: name, role });
+            program.motors.push(Motor { variable, hardware_name: name, role, max_rpm: None, max_acceleration: None, reversed: false });
         }
     }
 
-    // Explicit ftcCV declarations override name-based motor-role guessing.
-    // The declarations are metadata only; hardwareMap remains the source of
-    // actual motor variables and command execution.
-    let mut declared_roles: Vec<(String, MotorRole)> = Vec::new();
+    // Apply ftcCV metadata by hardware-map name. Declarations are parsed
+    // independently of whitespace and may include optional motor settings.
+    let mut declared_configs: Vec<(String, MotorRole, Option<f32>, Option<f32>, bool)> = Vec::new();
     let mut next_drive_index = 0usize;
-    for i in 0..tokens.len().saturating_sub(4) {
+    for i in 0..tokens.len().saturating_sub(5) {
         if !tokens[i].ident_is("ftcCV")
             || !tokens.get(i + 1).is_some_and(|t| t.punct("."))
             || !tokens.get(i + 2).is_some_and(|t| t.ident_is("hardware"))
@@ -64,8 +68,7 @@ pub fn interpret(source: &str) -> Program {
         let Some(end) = matching(&tokens, i + 5, "(", ")") else { continue; };
         let args = split_arguments(&tokens[i + 6..end]);
         let Some(name) = args.first().and_then(|arg| arg.iter().find(|t| t.string)).map(|t| t.text.clone()) else { continue; };
-        let Some(type_arg) = args.get(1) else { continue; };
-        let motor_type = type_arg.iter().rev().find_map(Token::ident).unwrap_or("");
+        let motor_type = args.get(1).and_then(|arg| arg.iter().rev().find_map(Token::ident)).unwrap_or("");
         let role = match motor_type {
             "DRIVE" => {
                 let inferred = classify_motor("", &name);
@@ -80,17 +83,49 @@ pub fn interpret(source: &str) -> Program {
             "FLYWHEEL" | "OUTTAKE" => MotorRole::Outtake,
             _ => MotorRole::Other,
         };
-        declared_roles.push((name, role));
+        let mut max_rpm = None;
+        let mut max_acceleration = None;
+        let mut reversed = false;
+        for option in args.iter().skip(2) {
+            let option_name = option.iter().find_map(Token::ident).unwrap_or("");
+            if option_name == "REVERSE" { reversed = true; }
+            if option_name == "FORWARD" { reversed = false; }
+            if option_name == "maxRPM" || option_name == "maxAcceleration" {
+                let value = option.iter().position(|token| token.punct("("))
+                    .and_then(|open| matching(option, open, "(", ")").map(|close| &option[open + 1..close]))
+                    .map(tokens_to_text)
+                    .and_then(|expression| resolve_number(source, &expression))
+                    .filter(|value| value.is_finite() && *value > 0.0);
+                if option_name == "maxRPM" { max_rpm = value; }
+                else { max_acceleration = value; }
+            }
+        }
+        declared_configs.push((name, role, max_rpm, max_acceleration, reversed));
     }
     for motor in &mut program.motors {
-        if let Some((_, role)) = declared_roles.iter().rev().find(|(name, _)| name == &motor.hardware_name) {
+        if let Some((_, role, rpm, acceleration, reversed)) =
+            declared_configs.iter().rev().find(|(name, _, _, _, _)| name == &motor.hardware_name) {
             motor.role = role.clone();
+            motor.max_rpm = *rpm;
+            motor.max_acceleration = *acceleration;
+            motor.reversed = *reversed;
         }
     }
-    if !declared_roles.is_empty() {
+    if !declared_configs.is_empty() {
+        let matched = program.motors.iter().filter(|motor|
+            declared_configs.iter().any(|(name, _, _, _, _)| name == &motor.hardware_name)
+        ).count();
         program.diagnostics.push(format!(
-            "Applied {} ftcCV hardware declaration(s).", declared_roles.len()
+            "Parsed {} ftcCV declaration(s); matched {matched} to hardwareMap motor(s).",
+            declared_configs.len()
         ));
+        for (name, _, _, _, _) in &declared_configs {
+            if !program.motors.iter().any(|motor| &motor.hardware_name == name) {
+                program.diagnostics.push(format!(
+                    "ftcCV motor '{name}' has no matching hardwareMap declaration; check the exact configured name."
+                ));
+            }
+        }
     }
 
     // Find if(gamepad1.<button>) blocks; braces are balanced from tokens, so
@@ -265,6 +300,13 @@ fn resolve_variable(source: &str, variable: &str, depth: usize) -> Option<f32> {
         }
     }
     result
+}
+
+fn motor_role_for_variable(source: &str, variable: &str) -> MotorRole {
+    interpret(source).motors.iter()
+        .find(|motor| motor.variable == variable)
+        .map(|motor| motor.role.clone())
+        .unwrap_or_else(|| classify_motor(variable, variable))
 }
 
 fn classify_motor(variable: &str, hardware: &str) -> MotorRole {
@@ -778,7 +820,7 @@ fn extract_instant_method_actions(source: &str, _tokens: &[Token]) -> Vec<(Strin
                 if !body.get(member_at + 2).is_some_and(|t| t.punct("(")) { continue; }
                 let Some(end) = matching(&body, member_at + 2, "(", ")") else { continue; };
                 let expression = tokens_to_text(&body[member_at + 3..end]);
-                let role = classify_motor(variable, variable);
+                let role = motor_role_for_variable(source, variable);
                 if matches!(role, MotorRole::Other | MotorRole::Drive(_)) { continue; }
                 let minimum_flywheel_velocity = minimum_flywheel_velocity_for_command(&body, lambda_open, lambda_end, command_at, source);
                 let condition = condition_for_command(&body, lambda_open, lambda_end, command_at);
