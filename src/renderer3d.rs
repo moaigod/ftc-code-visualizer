@@ -122,25 +122,6 @@ impl FieldRenderer {
         mesh.beam([66.0,72.0,22.0],[66.0,72.0,17.0],0.28,0.28,[0.50,0.52,0.49]);
         mesh.beam([78.0,72.0,22.0],[78.0,72.0,17.0],0.28,0.28,[0.50,0.52,0.49]);
 
-        // Opposing elevated alliance baskets: rectangular colored rims, mesh-like
-        // lower trays, and angled braces. These are visual field elements.
-        for (center,color,edge) in [
-            ([72.0,61.5,18.0],[0.08,0.20,0.88],[0.12,0.32,1.0]),
-            ([72.0,82.5,18.0],[0.86,0.10,0.12],[1.0,0.22,0.18])
-        ] {
-            let (x,y,z)=(center[0],center[1],center[2]);
-            mesh.beam([x-8.0,y-4.0,z+2.0],[x+8.0,y-4.0,z+2.0],0.38,0.38,edge);
-            mesh.beam([x+8.0,y-4.0,z+2.0],[x+8.0,y+4.0,z+2.0],0.38,0.38,edge);
-            mesh.beam([x+8.0,y+4.0,z+2.0],[x-8.0,y+4.0,z+2.0],0.38,0.38,edge);
-            mesh.beam([x-8.0,y+4.0,z+2.0],[x-8.0,y-4.0,z+2.0],0.38,0.38,edge);
-            mesh.cuboid([x,y,z],[7.2,3.2,0.35],color);
-            for j in -3..=3 {
-                mesh.beam([x+j as f32*2.0,y-3.0,z-0.7],[x+j as f32*2.0,y+3.0,z-0.7],0.07,0.07,[0.72,0.74,0.70]);
-            }
-            mesh.beam([x-7.0,y,z-1.0],[x-4.0,y,z-5.0],0.22,0.22,[0.50,0.52,0.49]);
-            mesh.beam([x+7.0,y,z-1.0],[x+4.0,y,z-5.0],0.22,0.22,[0.50,0.52,0.49]);
-        }
-
         // Four field-side green posts with yellow caps and small base plates.
         for (x,y) in [(25.0,20.0),(119.0,20.0),(25.0,124.0),(119.0,124.0)] {
             mesh.cuboid([x,y,0.65],[2.0,2.0,0.65],[0.12,0.17,0.12]);
