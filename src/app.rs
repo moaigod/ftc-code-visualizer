@@ -74,7 +74,9 @@ pub struct VisualizerApp {
     element_restitution: f32,
     field_texture: Option<TextureHandle>, field_load_attempted: bool,
     project_name: Option<String>, op_modes: Vec<OpModeInfo>,
-    selected_op_mode: Option<usize>, show_source: bool, import_status: String,
+    selected_op_mode: Option<usize>, motor_config_cache_op_mode: Option<usize>,
+    motor_config_cache: Vec<crate::ftc_interpreter::Motor>,
+    show_source: bool, import_status: String,
     gamepad: Option<Gilrs>, selected_gamepad: Option<gilrs::GamepadId>, controller_status: String,
     stick_forward: f32, stick_strafe: f32, stick_turn: f32,
     forward_velocity: f32, strafe_velocity: f32, turn_velocity: f32,
@@ -143,7 +145,8 @@ impl Default for VisualizerApp {
             element_friction: 0.72,
             element_restitution: 0.16,
             field_texture: None, field_load_attempted: false, project_name: None,
-            op_modes: Vec::new(), selected_op_mode: None, show_source: false,
+            op_modes: Vec::new(), selected_op_mode: None, motor_config_cache_op_mode: None,
+            motor_config_cache: Vec::new(), show_source: false,
             import_status: "No FTC project loaded.".to_owned(),
             gamepad, selected_gamepad: None, controller_status, stick_forward: 0.0, stick_strafe: 0.0, stick_turn: 0.0,
             forward_velocity: 0.0, strafe_velocity: 0.0, turn_velocity: 0.0,
@@ -624,13 +627,17 @@ impl VisualizerApp {
         self.pollen_status=format!("{name} fired FIFO. {} element(s) remain.",self.carried_elements.len());
     }
 
-    fn configured_drive_limits(&self) -> (f32, f32) {
-        let source = self.selected_op_mode
+    fn refresh_motor_config_cache(&mut self) {
+        if self.motor_config_cache_op_mode == self.selected_op_mode { return; }
+        self.motor_config_cache = self.selected_op_mode
             .and_then(|index| self.op_modes.get(index))
-            .map(|mode| mode.source.as_str())
-            .unwrap_or("");
-        let program = crate::ftc_interpreter::interpret(source);
-        let drive_motors: Vec<_> = program.motors.iter().filter(|motor|
+            .map(|mode| crate::ftc_interpreter::interpret(&mode.source).motors)
+            .unwrap_or_default();
+        self.motor_config_cache_op_mode = self.selected_op_mode;
+    }
+
+    fn configured_drive_limits(&self) -> (f32, f32) {
+        let drive_motors: Vec<_> = self.motor_config_cache.iter().filter(|motor|
             matches!(&motor.role, crate::ftc_interpreter::MotorRole::Drive(_))
         ).collect();
         let rpm_values: Vec<f32> = drive_motors.iter().filter_map(|motor| motor.max_rpm).collect();
@@ -716,12 +723,7 @@ impl VisualizerApp {
         // Once the target is reached, use feedback to hold speed and recover
         // from projectile impacts without easing off during spin-up.
         let error = self.flywheel_target_velocity - self.flywheel_velocity;
-        let source = self.selected_op_mode
-            .and_then(|index| self.op_modes.get(index))
-            .map(|mode| mode.source.as_str())
-            .unwrap_or("");
-        let program = crate::ftc_interpreter::interpret(source);
-        let outtakes: Vec<_> = program.motors.iter().filter(|motor|
+        let outtakes: Vec<_> = self.motor_config_cache.iter().filter(|motor|
             matches!(&motor.role, crate::ftc_interpreter::MotorRole::Outtake)
         ).collect();
         let rpm_values: Vec<f32> = outtakes.iter().filter_map(|motor| motor.max_rpm).collect();
@@ -2060,6 +2062,7 @@ fn approach(current: f32, target: f32, max_delta: f32) -> f32 {
 
 impl eframe::App for VisualizerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.refresh_motor_config_cache();
         self.load_field_image(ctx);
         let keyboard_intake = ctx.input(|input| input.key_pressed(egui::Key::E));
         let keyboard_shoot = ctx.input(|input| input.key_pressed(egui::Key::Space));
