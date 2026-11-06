@@ -55,7 +55,12 @@ pub fn scan_project(project_root: &Path) -> Result<ProjectScan, String> {
     // Append those source files to each OpMode's interpreter input so selecting
     // an OpMode does not require the declarations to be physically in that file.
     let hardware_config_sources: Vec<(PathBuf, String)> = loaded_sources.iter()
-        .filter(|(_, source)| source.contains("ftcCV.hardware.motor"))
+        .filter(|(_, source)| {
+            // Ignore formatting and line breaks between the Java member names.
+            // The parser itself handles comments and token boundaries.
+            let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+            compact.contains("ftcCV.hardware.motor(")
+        })
         .map(|(path, source)| (path.clone(), source.clone()))
         .collect();
 
