@@ -19,6 +19,37 @@ public final class ftcCV {
         DRIVE, INTAKE, FEEDER, FLYWHEEL, OUTTAKE, OTHER
     }
 
+    public enum PinpointPodType {
+        GOBILDA_4_BAR, GOBILDA_SWINGARM, CUSTOM
+    }
+
+    public enum EncoderDirection {
+        FORWARD, REVERSED
+    }
+
+    public static final class PinpointConfig {
+        public final String name;
+        public final PinpointPodType podType;
+        public final double xOffsetMm;
+        public final double yOffsetMm;
+        public final EncoderDirection xDirection;
+        public final EncoderDirection yDirection;
+        public final Double ticksPerMm;
+
+        private PinpointConfig(String name, PinpointPodType podType,
+                               double xOffsetMm, double yOffsetMm,
+                               EncoderDirection xDirection, EncoderDirection yDirection,
+                               Double ticksPerMm) {
+            this.name = name;
+            this.podType = podType;
+            this.xOffsetMm = xOffsetMm;
+            this.yOffsetMm = yOffsetMm;
+            this.xDirection = xDirection;
+            this.yDirection = yDirection;
+            this.ticksPerMm = ticksPerMm;
+        }
+    }
+
     public interface MotorOption {}
 
     public enum Direction implements MotorOption {
@@ -72,6 +103,34 @@ public final class ftcCV {
 
     public static final class Hardware {
         private final List<MotorConfig> motors = new ArrayList<>();
+        private PinpointConfig pinpoint;
+
+        /**
+         * Declares a goBILDA Pinpoint odometry computer. Offsets are in mm
+         * relative to the robot center; encoder directions are independent.
+         * For CUSTOM pods, provide ticksPerMm; for presets it may be null.
+         */
+        public synchronized PinpointConfig pinpoint(
+                String name, PinpointPodType podType,
+                double xOffsetMm, double yOffsetMm,
+                EncoderDirection xDirection, EncoderDirection yDirection,
+                Double ticksPerMm) {
+            if (name == null || name.trim().isEmpty() || podType == null
+                    || xDirection == null || yDirection == null) {
+                throw new IllegalArgumentException("Pinpoint name, pod type, and directions are required");
+            }
+            if (!Double.isFinite(xOffsetMm) || !Double.isFinite(yOffsetMm)
+                    || (ticksPerMm != null && (!Double.isFinite(ticksPerMm) || ticksPerMm <= 0))) {
+                throw new IllegalArgumentException("Pinpoint offsets must be finite and ticks/mm must be positive");
+            }
+            pinpoint = new PinpointConfig(name.trim(), podType, xOffsetMm, yOffsetMm,
+                    xDirection, yDirection, ticksPerMm);
+            return pinpoint;
+        }
+
+        public synchronized PinpointConfig getPinpoint() {
+            return pinpoint;
+        }
 
         /**
          * Declares a motor for simulator metadata. Re-declaring a name replaces
