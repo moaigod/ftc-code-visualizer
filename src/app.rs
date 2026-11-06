@@ -631,7 +631,7 @@ impl VisualizerApp {
             .unwrap_or("");
         let program = crate::ftc_interpreter::interpret(source);
         let drive_motors: Vec<_> = program.motors.iter().filter(|motor|
-            matches!(motor.role, crate::ftc_interpreter::MotorRole::Drive(_))
+            matches!(&motor.role, crate::ftc_interpreter::MotorRole::Drive(_))
         ).collect();
         let rpm_values: Vec<f32> = drive_motors.iter().filter_map(|motor| motor.max_rpm).collect();
         let acceleration_values: Vec<f32> = drive_motors.iter()
