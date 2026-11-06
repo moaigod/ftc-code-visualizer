@@ -851,6 +851,10 @@ impl VisualizerApp {
         // while unscored pieces bounce off the scoring-cell perimeter.
         for element in &mut self.field_pollen {
             if element.from_flower {
+                // Flower pollen is loose enough to be pulled by the intake,
+                // but it must remain inside the flower's recessed collection
+                // area instead of rolling along the field or escaping sideways.
+                contain_flower_pollen(element);
                 continue;
             }
             if element.scored {
@@ -1916,6 +1920,41 @@ fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: Hiv
                 element.vy -= 1.35 * into_wall * ny;
             }
         }
+    }
+}
+
+fn contain_flower_pollen(element: &mut Pollen) {
+    // The four flowers sit against the field perimeter. Keep their pollen in
+    // a shallow, 14-inch-wide pocket while allowing it to move inward toward
+    // a robot's intake. The field wall forms the outer edge of each pocket.
+    let radius = element.radius.max(0.0);
+    let (min_x, max_x, min_y, max_y) = if element.y < 72.0 {
+        // Bottom flower.
+        (96.5 - 7.0 + radius, 96.5 + 7.0 - radius, radius, 8.0 - radius)
+    } else if element.x > 72.0 {
+        // Right flower.
+        (FIELD_SIZE_IN - 8.0 + radius, FIELD_SIZE_IN - radius, 96.5 - 7.0 + radius, 96.5 + 7.0 - radius)
+    } else if element.y > 72.0 {
+        // Top flower.
+        (47.5 - 7.0 + radius, 47.5 + 7.0 - radius, FIELD_SIZE_IN - 8.0 + radius, FIELD_SIZE_IN - radius)
+    } else {
+        // Left flower.
+        (radius, 8.0 - radius, 47.5 - 7.0 + radius, 47.5 + 7.0 - radius)
+    };
+
+    if element.x < min_x {
+        element.x = min_x;
+        element.vx = element.vx.abs() * 0.25;
+    } else if element.x > max_x {
+        element.x = max_x;
+        element.vx = -element.vx.abs() * 0.25;
+    }
+    if element.y < min_y {
+        element.y = min_y;
+        element.vy = element.vy.abs() * 0.25;
+    } else if element.y > max_y {
+        element.y = max_y;
+        element.vy = -element.vy.abs() * 0.25;
     }
 }
 
