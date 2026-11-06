@@ -1552,8 +1552,8 @@ impl VisualizerApp {
                 let ticks_per_mm = pinpoint.ticks_per_mm.unwrap_or_else(|| {
                     if pod.contains("SWINGARM") { 19.8944 } else { 13.2629 }
                 }).max(0.001);
-                let x_offset_in = pinpoint.x_offset_mm.unwrap_or(0.0) / 25.4;
-                let y_offset_in = pinpoint.y_offset_mm.unwrap_or(0.0) / 25.4;
+                let x_offset_in = pinpoint.x_offset_in.unwrap_or(0.0);
+                let y_offset_in = pinpoint.y_offset_in.unwrap_or(0.0);
                 // Emulate the two orthogonal Pinpoint pods, including their
                 // rotational displacement, encoder polarity, and resolution.
                 let x_pod = local_forward - encoder_turn_rad * y_offset_in;
@@ -2306,9 +2306,9 @@ impl eframe::App for VisualizerApp {
             ui.label(format!("Estimated pose: X {:.1} · Y {:.1} · heading {:.1}°", self.odometry_x, self.odometry_y, self.odometry_heading_deg));
             if let Some(pinpoint) = &self.pinpoint_config_cache {
                 let resolution = pinpoint.ticks_per_mm.unwrap_or_else(|| if pinpoint.pod_type.to_ascii_uppercase().contains("SWINGARM") { 19.8944 } else { 13.2629 });
-                ui.label(format!("Pinpoint: {} · {} · offsets ({:.1}, {:.1}) mm · {:.4} ticks/mm",
+                ui.label(format!("Pinpoint: {} · {} · offsets ({:.2}, {:.2}) in · {:.4} ticks/mm",
                     pinpoint.hardware_name, pinpoint.pod_type,
-                    pinpoint.x_offset_mm.unwrap_or(0.0), pinpoint.y_offset_mm.unwrap_or(0.0), resolution));
+                    pinpoint.x_offset_in.unwrap_or(0.0), pinpoint.y_offset_in.unwrap_or(0.0), resolution));
             }
             ui.label(format!("Input: F {:.2} · S {:.2} · R {:.2}",
                 self.stick_forward, self.stick_strafe, self.stick_turn));
