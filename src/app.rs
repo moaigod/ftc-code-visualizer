@@ -716,8 +716,26 @@ impl VisualizerApp {
         // Once the target is reached, use feedback to hold speed and recover
         // from projectile impacts without easing off during spin-up.
         let error = self.flywheel_target_velocity - self.flywheel_velocity;
-        let free_speed = 6000.0_f32;
-        let max_acceleration = 9000.0 * (1.0 - self.flywheel_velocity / free_speed).clamp(0.0, 1.0);
+        let source = self.selected_op_mode
+            .and_then(|index| self.op_modes.get(index))
+            .map(|mode| mode.source.as_str())
+            .unwrap_or("");
+        let program = crate::ftc_interpreter::interpret(source);
+        let outtakes: Vec<_> = program.motors.iter().filter(|motor|
+            matches!(&motor.role, crate::ftc_interpreter::MotorRole::Outtake)
+        ).collect();
+        let rpm_values: Vec<f32> = outtakes.iter().filter_map(|motor| motor.max_rpm).collect();
+        let acceleration_values: Vec<f32> = outtakes.iter()
+            .filter_map(|motor| motor.max_acceleration).collect();
+        let average = |values: &[f32], fallback: f32| {
+            if values.is_empty() { fallback }
+            else { values.iter().sum::<f32>() / values.len() as f32 }
+        };
+        let free_speed = 6000.0 * (average(&rpm_values, 6000.0) / 6000.0).clamp(0.1, 3.0);
+        let configured_acceleration =
+            9000.0 * (average(&acceleration_values, 3500.0) / 3500.0).clamp(0.1, 4.0);
+        let max_acceleration =
+            configured_acceleration * (1.0 - self.flywheel_velocity / free_speed).clamp(0.0, 1.0);
         let motor_acceleration = if self.flywheel_target_velocity <= 0.0 {
             -self.flywheel_velocity * 3.0
         } else if error > 0.0 {
