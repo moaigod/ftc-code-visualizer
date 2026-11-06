@@ -564,15 +564,20 @@ impl VisualizerApp {
         // shoot_pollen() is only called while the feeder is running, so its
         // prerequisite is already satisfied. Avoid reparsing the entire Java
         // OpMode on every shot when the intake is also running.
-        if !self.intake_running {
+        let has_intake = if self.intake_running {
+            true
+        } else {
             let source=self.selected_op_mode.and_then(|i|self.op_modes.get(i)).map(|m|m.source.as_str()).unwrap_or("");
             let program=crate::ftc_interpreter::interpret(source);
-            let has_intake=program.motors.iter().any(|m|matches!(&m.role,crate::ftc_interpreter::MotorRole::Intake));
-            if has_intake {
+            let detected=program.motors.iter().any(|m|matches!(&m.role,crate::ftc_interpreter::MotorRole::Intake));
+            if detected {
                 self.pollen_status="Shot blocked: activate the detected intake first.".to_owned();
                 return;
             }
-        }
+            false
+        };
+        // This function is only reached while the feeder is active.
+        let has_feeder = true;
         if self.carried_elements.is_empty() {self.pollen_status="No scoring elements onboard to shoot.".to_owned();return;}
         if self.shot_cooldown>0.0{return;}
         let target=self.flywheel_target_velocity;
