@@ -2310,7 +2310,15 @@ impl eframe::App for VisualizerApp {
                             crate::ftc_interpreter::MotorRole::Outtake => "Outtake",
                             crate::ftc_interpreter::MotorRole::Other => "Other motor",
                         };
-                        ui.label(format!("{} -> {} ({})", motor.variable, motor.hardware_name, role));
+                        ui.label(format!(
+                            "{} -> {} ({}) | maxRPM: {} | maxAcceleration: {} | direction: {}",
+                            motor.variable,
+                            motor.hardware_name,
+                            role,
+                            motor.max_rpm.map(|value| format!("{value:.0}")).unwrap_or_else(|| "default".to_owned()),
+                            motor.max_acceleration.map(|value| format!("{value:.0}")).unwrap_or_else(|| "default".to_owned()),
+                            if motor.reversed { "REVERSE" } else { "FORWARD" }
+                        ));
                     }
                     ui.separator();
                     for command in &program.commands {
