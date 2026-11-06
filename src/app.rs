@@ -76,6 +76,7 @@ pub struct VisualizerApp {
     project_name: Option<String>, op_modes: Vec<OpModeInfo>,
     selected_op_mode: Option<usize>, motor_config_cache_op_mode: Option<usize>,
     motor_config_cache: Vec<crate::ftc_interpreter::Motor>,
+    pinpoint_config_cache: Option<crate::ftc_interpreter::PinpointConfig>,
     show_source: bool, import_status: String,
     gamepad: Option<Gilrs>, selected_gamepad: Option<gilrs::GamepadId>, controller_status: String,
     stick_forward: f32, stick_strafe: f32, stick_turn: f32,
@@ -88,6 +89,7 @@ pub struct VisualizerApp {
     drive_wheel_velocity: [f32; 4],
     drive_wheel_encoder_ticks: [f32; 4],
     drive_wheel_encoder_last_ticks: [f32; 4],
+    odometry_last_encoder_ticks: [f32; 4],
     drive_wheel_velocity_integral: [f32; 4],
     odometry_x: f32,
     odometry_y: f32,
@@ -146,7 +148,7 @@ impl Default for VisualizerApp {
             element_restitution: 0.16,
             field_texture: None, field_load_attempted: false, project_name: None,
             op_modes: Vec::new(), selected_op_mode: None, motor_config_cache_op_mode: None,
-            motor_config_cache: Vec::new(), show_source: false,
+            motor_config_cache: Vec::new(), pinpoint_config_cache: None, show_source: false,
             import_status: "No FTC project loaded.".to_owned(),
             gamepad, selected_gamepad: None, controller_status, stick_forward: 0.0, stick_strafe: 0.0, stick_turn: 0.0,
             forward_velocity: 0.0, strafe_velocity: 0.0, turn_velocity: 0.0,
@@ -158,6 +160,7 @@ impl Default for VisualizerApp {
             drive_wheel_velocity: [0.0; 4],
             drive_wheel_encoder_ticks: [0.0; 4],
             drive_wheel_encoder_last_ticks: [0.0; 4],
+            odometry_last_encoder_ticks: [0.0; 4],
             drive_wheel_velocity_integral: [0.0; 4],
             odometry_x: 24.0,
             odometry_y: 24.0,
@@ -225,6 +228,7 @@ impl VisualizerApp {
         self.drive_wheel_velocity = [0.0; 4];
         self.drive_wheel_encoder_ticks = [0.0; 4];
         self.drive_wheel_encoder_last_ticks = [0.0; 4];
+        self.odometry_last_encoder_ticks = [0.0; 4];
         self.drive_wheel_velocity_integral = [0.0; 4];
         self.odometry_x = self.robot_x;
         self.odometry_y = self.robot_y;
@@ -629,10 +633,11 @@ impl VisualizerApp {
 
     fn refresh_motor_config_cache(&mut self) {
         if self.motor_config_cache_op_mode == self.selected_op_mode { return; }
-        self.motor_config_cache = self.selected_op_mode
+        let program = self.selected_op_mode
             .and_then(|index| self.op_modes.get(index))
-            .map(|mode| crate::ftc_interpreter::interpret(&mode.source).motors)
-            .unwrap_or_default();
+            .map(|mode| crate::ftc_interpreter::interpret(&mode.source));
+        self.motor_config_cache = program.as_ref().map(|program| program.motors.clone()).unwrap_or_default();
+        self.pinpoint_config_cache = program.and_then(|program| program.pinpoint);
         self.motor_config_cache_op_mode = self.selected_op_mode;
     }
 
@@ -1181,6 +1186,14 @@ impl VisualizerApp {
     fn telemetry_value(&self, expression: &str) -> String {
         let key = expression.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase();
 
+        // Math.toDegrees(Pose.heading()) is common in PedroPathing telemetry.
+        if key.starts_with("math.todegrees(") && key.ends_with(')') {
+            let inner = &key["math.todegrees(".len()..key.len() - 1];
+            if inner.contains("heading()") {
+                return format!("{:.1}°", self.odometry_heading_deg);
+            }
+        }
+
         // PedroPathing and common pose APIs: expose the visualizer's simulated pose.
         match key.as_str() {
             "heading" | "headingdeg" | "robotheading" | "heading_degrees" => return format!("{:.1}°", self.heading_deg),
@@ -1513,22 +1526,54 @@ impl VisualizerApp {
             self.loose_physics_accumulator = (self.loose_physics_accumulator - physics_dt).max(0.0);
         }
 
-        // A 50 Hz localization update with small encoder/IMU-like lag and
-        // deterministic measurement noise. Autonomous and telemetry consume
-        // this estimate rather than the hidden ground-truth pose.
+        // Localize from incremental wheel encoder measurements, not the
+        // hidden Rapier ground-truth pose. A configured Pinpoint adds pod
+        // offset compensation and stronger IMU heading fusion.
         self.sensor_update_timer += dt;
         if self.sensor_update_timer >= 0.02 {
-            self.sensor_update_timer %= 0.02;
-            let sample_phase = self.elapsed_seconds * 17.0;
-            let x_measurement = self.robot_x + sample_phase.sin() * 0.035;
-            let y_measurement = self.robot_y + (sample_phase * 0.83).cos() * 0.035;
-            self.odometry_x = approach(self.odometry_x, x_measurement, 85.0 * dt);
-            self.odometry_y = approach(self.odometry_y, y_measurement, 85.0 * dt);
-            let heading_error = (self.heading_deg - self.odometry_heading_deg + 540.0)
-                .rem_euclid(360.0) - 180.0;
-            self.odometry_heading_deg = (self.odometry_heading_deg
-                + (heading_error * 0.55 + sample_phase.sin() * 0.025))
-                .rem_euclid(360.0);
+            self.sensor_update_timer = 0.0;
+            let mut wheel_delta = [0.0_f32; 4];
+            for i in 0..4 {
+                wheel_delta[i] = (self.drive_wheel_encoder_ticks[i]
+                    - self.odometry_last_encoder_ticks[i]) / 28.0;
+                self.odometry_last_encoder_ticks[i] = self.drive_wheel_encoder_ticks[i];
+            }
+            let forward = (wheel_delta[0] + wheel_delta[1] + wheel_delta[2] + wheel_delta[3]) * 0.25;
+            let strafe = (wheel_delta[0] - wheel_delta[1] - wheel_delta[2] + wheel_delta[3]) * 0.25;
+            let encoder_turn_rad = (wheel_delta[0] - wheel_delta[1] + wheel_delta[2] - wheel_delta[3]) / 36.0;
+            let mut local_forward = forward;
+            let mut local_strafe = strafe;
+            if let Some(pinpoint) = &self.pinpoint_config_cache {
+                let pod = pinpoint.pod_type.to_ascii_uppercase();
+                let ticks_per_mm = pinpoint.ticks_per_mm.unwrap_or_else(|| {
+                    if pod.contains("SWINGARM") { 19.8944 } else { 13.2629 }
+                }).max(0.001);
+                let x_offset_in = pinpoint.x_offset_mm.unwrap_or(0.0) / 25.4;
+                let y_offset_in = pinpoint.y_offset_mm.unwrap_or(0.0) / 25.4;
+                // Emulate the two orthogonal Pinpoint pods, including their
+                // rotational displacement, encoder polarity, and resolution.
+                let x_pod = local_forward - encoder_turn_rad * y_offset_in;
+                let y_pod = local_strafe + encoder_turn_rad * x_offset_in;
+                let x_ticks = x_pod * 25.4 * ticks_per_mm
+                    * if pinpoint.x_direction_reversed { -1.0 } else { 1.0 };
+                let y_ticks = y_pod * 25.4 * ticks_per_mm
+                    * if pinpoint.y_direction_reversed { -1.0 } else { 1.0 };
+                local_forward = x_ticks / (25.4 * ticks_per_mm)
+                    * if pinpoint.x_direction_reversed { -1.0 } else { 1.0 }
+                    + encoder_turn_rad * y_offset_in;
+                local_strafe = y_ticks / (25.4 * ticks_per_mm)
+                    * if pinpoint.y_direction_reversed { -1.0 } else { 1.0 }
+                    - encoder_turn_rad * x_offset_in;
+            }
+            let heading_mid = (self.odometry_heading_deg + encoder_turn_rad.to_degrees() * 0.5).to_radians();
+            let world_dx = local_strafe * heading_mid.cos() + local_forward * heading_mid.sin();
+            let world_dy = -local_strafe * heading_mid.sin() + local_forward * heading_mid.cos();
+            self.odometry_x = (self.odometry_x + world_dx).clamp(0.0, FIELD_SIZE_IN);
+            self.odometry_y = (self.odometry_y + world_dy).clamp(0.0, FIELD_SIZE_IN);
+            let encoder_heading = (self.odometry_heading_deg + encoder_turn_rad.to_degrees()).rem_euclid(360.0);
+            let imu_error = (self.heading_deg - encoder_heading + 540.0).rem_euclid(360.0) - 180.0;
+            let imu_weight = if self.pinpoint_config_cache.is_some() { 0.18 } else { 0.04 };
+            self.odometry_heading_deg = (encoder_heading + imu_error * imu_weight).rem_euclid(360.0);
         }
 
         let objects_moving = self.field_pollen.iter().any(|element| {
@@ -2255,6 +2300,12 @@ impl eframe::App for VisualizerApp {
             ui.label("Right stick X: rotate");
             ui.label("Mecanum wheel mixing with per-wheel encoder velocity control and motor acceleration.");
             ui.label(format!("Estimated pose: X {:.1} · Y {:.1} · heading {:.1}°", self.odometry_x, self.odometry_y, self.odometry_heading_deg));
+            if let Some(pinpoint) = &self.pinpoint_config_cache {
+                let resolution = pinpoint.ticks_per_mm.unwrap_or_else(|| if pinpoint.pod_type.to_ascii_uppercase().contains("SWINGARM") { 19.8944 } else { 13.2629 });
+                ui.label(format!("Pinpoint: {} · {} · offsets ({:.1}, {:.1}) mm · {:.4} ticks/mm",
+                    pinpoint.hardware_name, pinpoint.pod_type,
+                    pinpoint.x_offset_mm.unwrap_or(0.0), pinpoint.y_offset_mm.unwrap_or(0.0), resolution));
+            }
             ui.label(format!("Input: F {:.2} · S {:.2} · R {:.2}",
                 self.stick_forward, self.stick_strafe, self.stick_turn));
             ui.collapsing("Drive motor power / velocity", |ui| {
