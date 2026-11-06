@@ -41,15 +41,15 @@ ftcCV.hardware.motor(
 ## goBILDA Pinpoint odometry
 
 Declare the Pinpoint hardware and its tracking-pod geometry in the robot
-configuration. Offsets are measured from the robot center in millimeters.
+configuration. Offsets are measured from the robot center in inches.
 Use the encoder directions that match the physical pod wiring.
 
 ```java
 ftcCV.hardware.pinpoint(
     "pinpoint",
     ftcCV.PinpointPodType.GOBILDA_4_BAR,
-    -84.0,   // X pod offset (mm)
-    -168.0,  // Y pod offset (mm)
+    -3.31,  // X pod offset (in)
+    -6.61,  // Y pod offset (in)
     ftcCV.EncoderDirection.FORWARD,
     ftcCV.EncoderDirection.REVERSED
 );
