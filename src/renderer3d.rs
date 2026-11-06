@@ -151,6 +151,20 @@ impl FieldRenderer {
             mesh.cylinder([x,y,9.5],1.05,0.35,[0.95,0.78,0.08]);
             mesh.cylinder([x,y,10.2],0.35,0.35,[0.96,0.90,0.22]);
         }
+        // Three compact driver-station consoles along each alliance end wall.
+        // The colored face panels and rails make the two ends easy to identify.
+        for (y,alliance) in [(7.0,[0.08,0.28,0.92]),(137.0,[0.90,0.10,0.14])] {
+            for x in [9.0,21.0,33.0] {
+                mesh.cuboid([x,y,2.2],[4.6,2.1,2.2],[0.16,0.18,0.17]);
+                mesh.cuboid([x,y-0.15,4.55],[4.2,1.9,0.22],[0.22,0.24,0.22]);
+                mesh.cuboid([x,y-2.0,3.2],[3.6,0.12,1.0],alliance);
+                mesh.beam([x-4.5,y-2.2,4.9],[x+4.5,y-2.2,4.9],0.12,0.12,[0.07,0.08,0.07]);
+                mesh.cylinder([x-2.8,y-1.4,4.95],0.24,0.12,[0.08,0.08,0.08]);
+                mesh.cylinder([x+2.8,y-1.4,4.95],0.24,0.12,[0.08,0.08,0.08]);
+            }
+            // Alliance-color end-wall identification strip.
+            mesh.beam([3.0,y,5.1],[41.0,y,5.1],0.24,0.24,alliance);
+        }
         for (x,y) in red_hives {
             mesh.cuboid([x,y,1.25],[11.0,7.0,1.25],[0.66,0.18,0.20]);
             mesh.cuboid([x,y,2.6],[10.2,6.2,0.12],[0.78,0.35,0.35]);
