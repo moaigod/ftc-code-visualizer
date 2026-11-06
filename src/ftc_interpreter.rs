@@ -3,6 +3,17 @@
 //! numeric variables, and DcMotor/DcMotorEx commands. It does not execute Android code.
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct PinpointConfig {
+    pub hardware_name: String,
+    pub pod_type: String,
+    pub x_offset_mm: Option<f32>,
+    pub y_offset_mm: Option<f32>,
+    pub x_direction_reversed: bool,
+    pub y_direction_reversed: bool,
+    pub ticks_per_mm: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Motor {
     pub variable: String,
     pub hardware_name: String,
@@ -29,6 +40,7 @@ pub struct MotorCommand {
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     pub motors: Vec<Motor>,
+    pub pinpoint: Option<PinpointConfig>,
     pub commands: Vec<MotorCommand>,
     pub button_actions: Vec<(String, String)>,
     pub diagnostics: Vec<String>,
@@ -126,6 +138,66 @@ pub fn interpret(source: &str) -> Program {
                 ));
             }
         }
+    }
+
+    // Parse optional goBILDA Pinpoint metadata. The API accepts signed pod
+    // offsets in millimeters, pod preset or custom ticks/mm, and encoder directions.
+    for i in 0..tokens.len().saturating_sub(5) {
+        if !tokens[i].ident_is("ftcCV")
+            || !tokens.get(i + 1).is_some_and(|t| t.punct("."))
+            || !tokens.get(i + 2).is_some_and(|t| t.ident_is("hardware"))
+            || !tokens.get(i + 3).is_some_and(|t| t.punct("."))
+            || !tokens.get(i + 4).is_some_and(|t| t.ident_is("pinpoint"))
+            || !tokens.get(i + 5).is_some_and(|t| t.punct("(")) {
+            continue;
+        }
+        let Some(end) = matching(&tokens, i + 5, "(", ")") else { continue; };
+        let args = split_arguments(&tokens[i + 6..end]);
+        let hardware_name = args.first()
+            .and_then(|arg| arg.iter().find(|t| t.string))
+            .map(|t| t.text.clone()).unwrap_or_else(|| "pinpoint".to_owned());
+        let pod_type = args.get(1)
+            .map(|arg| tokens_to_text(arg))
+            .unwrap_or_else(|| "CUSTOM".to_owned());
+        let mut offsets = [None, None];
+        let mut directions = [false, false];
+        let mut ticks_per_mm = None;
+        for arg in args.iter().skip(2) {
+            let text = tokens_to_text(arg);
+            let normalized = text.to_ascii_uppercase();
+            if normalized.contains("XOFFSET") || normalized.contains("X_OFFSET") {
+                offsets[0] = arg.iter().rev().find_map(|t| t.text.parse::<f32>().ok());
+            } else if normalized.contains("YOFFSET") || normalized.contains("Y_OFFSET") {
+                offsets[1] = arg.iter().rev().find_map(|t| t.text.parse::<f32>().ok());
+            }
+            if normalized.contains("XREVERSED") || normalized.contains("X_REVERSED") {
+                directions[0] = normalized.contains("TRUE");
+            } else if normalized.contains("YREVERSED") || normalized.contains("Y_REVERSED") {
+                directions[1] = normalized.contains("TRUE");
+            }
+            if normalized.contains("TICKSPERMM") || normalized.contains("TICKS_PER_MM") {
+                ticks_per_mm = arg.iter().rev().find_map(|t| t.text.parse::<f32>().ok());
+            }
+            if normalized.contains("REVERSED") && !normalized.contains("XREVERSED")
+                && !normalized.contains("YREVERSED") {
+                if normalized.contains("X") { directions[0] = true; }
+                if normalized.contains("Y") { directions[1] = true; }
+            }
+        }
+        let pod_upper = pod_type.to_ascii_uppercase();
+        if ticks_per_mm.is_none() {
+            ticks_per_mm = if pod_upper.contains("4_BAR") || pod_upper.contains("4BAR") {
+                Some(13.2629)
+            } else if pod_upper.contains("SWINGARM") {
+                Some(19.8944)
+            } else { None };
+        }
+        program.pinpoint = Some(PinpointConfig {
+            hardware_name, pod_type, x_offset_mm: offsets[0], y_offset_mm: offsets[1],
+            x_direction_reversed: directions[0], y_direction_reversed: directions[1],
+            ticks_per_mm,
+        });
+        break;
     }
 
     // Find if(gamepad1.<button>) blocks; braces are balanced from tokens, so
