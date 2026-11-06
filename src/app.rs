@@ -1253,10 +1253,13 @@ impl VisualizerApp {
             // Follow a short look-ahead target instead of stopping at every
             // sampled curve point. This avoids the visible stop/start motion
             // caused by snapping to each waypoint independently.
-            while self.autonomous_waypoint_index + 1 < self.autonomous_waypoints.len() {
+            while self.autonomous_waypoint_index < self.autonomous_waypoints.len() {
                 let point = self.autonomous_waypoints[self.autonomous_waypoint_index];
                 let distance = (point.0 - self.robot_x).hypot(point.1 - self.robot_y);
-                if distance < 3.5 {
+                let is_final_point =
+                    self.autonomous_waypoint_index + 1 == self.autonomous_waypoints.len();
+                let reach_radius = if is_final_point { 2.5 } else { 3.5 };
+                if distance < reach_radius {
                     self.autonomous_waypoint_index += 1;
                 } else {
                     break;
