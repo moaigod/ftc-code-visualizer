@@ -30,20 +30,20 @@ public final class ftcCV {
     public static final class PinpointConfig {
         public final String name;
         public final PinpointPodType podType;
-        public final double xOffsetMm;
-        public final double yOffsetMm;
+        public final double xOffsetIn;
+        public final double yOffsetIn;
         public final EncoderDirection xDirection;
         public final EncoderDirection yDirection;
         public final Double ticksPerMm;
 
         private PinpointConfig(String name, PinpointPodType podType,
-                               double xOffsetMm, double yOffsetMm,
+                               double xOffsetIn, double yOffsetIn,
                                EncoderDirection xDirection, EncoderDirection yDirection,
                                Double ticksPerMm) {
             this.name = name;
             this.podType = podType;
-            this.xOffsetMm = xOffsetMm;
-            this.yOffsetMm = yOffsetMm;
+            this.xOffsetIn = xOffsetIn;
+            this.yOffsetIn = yOffsetIn;
             this.xDirection = xDirection;
             this.yDirection = yDirection;
             this.ticksPerMm = ticksPerMm;
@@ -106,32 +106,32 @@ public final class ftcCV {
         private PinpointConfig pinpoint;
 
         /**
-         * Declares a goBILDA Pinpoint odometry computer. Offsets are in mm
+         * Declares a goBILDA Pinpoint odometry computer. Offsets are in inches
          * relative to the robot center; encoder directions are independent.
          * For CUSTOM pods, provide ticksPerMm; for presets it may be null.
          */
         public synchronized PinpointConfig pinpoint(
                 String name, PinpointPodType podType,
-                double xOffsetMm, double yOffsetMm,
+                double xOffsetIn, double yOffsetIn,
                 EncoderDirection xDirection, EncoderDirection yDirection) {
-            return pinpoint(name, podType, xOffsetMm, yOffsetMm,
+            return pinpoint(name, podType, xOffsetIn, yOffsetIn,
                     xDirection, yDirection, null);
         }
 
         public synchronized PinpointConfig pinpoint(
                 String name, PinpointPodType podType,
-                double xOffsetMm, double yOffsetMm,
+                double xOffsetIn, double yOffsetIn,
                 EncoderDirection xDirection, EncoderDirection yDirection,
                 Double ticksPerMm) {
             if (name == null || name.trim().isEmpty() || podType == null
                     || xDirection == null || yDirection == null) {
                 throw new IllegalArgumentException("Pinpoint name, pod type, and directions are required");
             }
-            if (!Double.isFinite(xOffsetMm) || !Double.isFinite(yOffsetMm)
+            if (!Double.isFinite(xOffsetIn) || !Double.isFinite(yOffsetIn)
                     || (ticksPerMm != null && (!Double.isFinite(ticksPerMm) || ticksPerMm <= 0))) {
                 throw new IllegalArgumentException("Pinpoint offsets must be finite and ticks/mm must be positive");
             }
-            pinpoint = new PinpointConfig(name.trim(), podType, xOffsetMm, yOffsetMm,
+            pinpoint = new PinpointConfig(name.trim(), podType, xOffsetIn, yOffsetIn,
                     xDirection, yDirection, ticksPerMm);
             return pinpoint;
         }
