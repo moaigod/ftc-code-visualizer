@@ -1310,7 +1310,11 @@ impl VisualizerApp {
             // caused by snapping to each waypoint independently.
             while self.autonomous_waypoint_index < self.autonomous_waypoints.len() {
                 let point = self.autonomous_waypoints[self.autonomous_waypoint_index];
-                let distance = (point.0 - self.robot_x).hypot(point.1 - self.robot_y);
+                // Progress and steering must use the same localized pose.
+                // Mixing ground-truth Rapier coordinates with delayed odometry
+                // can advance the path index past a target the controller has
+                // not actually reached yet.
+                let distance = (point.0 - self.odometry_x).hypot(point.1 - self.odometry_y);
                 let is_final_point =
                     self.autonomous_waypoint_index + 1 == self.autonomous_waypoints.len();
                 let reach_radius = if is_final_point { 2.5 } else { 3.5 };
