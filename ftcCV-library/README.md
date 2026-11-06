@@ -38,6 +38,31 @@ ftcCV.hardware.motor(
 );
 ```
 
+## goBILDA Pinpoint odometry
+
+Declare the Pinpoint hardware and its tracking-pod geometry in the robot
+configuration. Offsets are measured from the robot center in millimeters.
+Use the encoder directions that match the physical pod wiring.
+
+```java
+ftcCV.hardware.pinpoint(
+    "pinpoint",
+    ftcCV.PinpointPodType.GOBILDA_4_BAR,
+    -84.0,   // X pod offset (mm)
+    -168.0,  // Y pod offset (mm)
+    ftcCV.EncoderDirection.FORWARD,
+    ftcCV.EncoderDirection.REVERSED
+);
+```
+
+Available pod presets are `GOBILDA_4_BAR`, `GOBILDA_SWINGARM`, and
+`CUSTOM`. The presets use 13.2629 and 19.8944 ticks/mm respectively. For a
+custom pod, pass an additional final `ticksPerMm` value. The visualizer reads
+this declaration and uses the configured offsets, encoder polarity, and
+resolution in its Pinpoint-style odometry estimate. It does not initialize or
+control a real Pinpoint device; your OpMode must still configure and update
+the actual driver.
+
 ## Motor types
 
 - `DRIVE`
