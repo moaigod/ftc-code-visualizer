@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::sync::Arc;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, TextureHandle, Vec2};
 use gilrs::{Axis, Button, Gilrs};
 use rapier2d::prelude::*;
@@ -134,6 +135,7 @@ pub struct VisualizerApp {
     camera_yaw: f32,
     camera_pitch: f32,
     camera_distance: f32,
+    renderer_3d: Option<Arc<egui::mutex::Mutex<crate::renderer3d::FieldRenderer>>>,
 }
 
 impl Default for VisualizerApp {
@@ -209,11 +211,20 @@ impl Default for VisualizerApp {
             camera_yaw: -0.72,
             camera_pitch: 0.68,
             camera_distance: 245.0,
+            renderer_3d: None,
         }
     }
 }
 
 impl VisualizerApp {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let mut app = Self::default();
+        if let Some(gl) = &cc.gl {
+            app.renderer_3d = Some(Arc::new(egui::mutex::Mutex::new(crate::renderer3d::FieldRenderer::new(gl))));
+        }
+        app
+    }
+
     fn reset(&mut self) {
         // Restore the simulated match to the same initial state every time.
         // Keep imported project selection and user configuration (test speed,
@@ -1653,146 +1664,51 @@ impl VisualizerApp {
             self.camera_distance = (self.camera_distance * (-scroll * 0.0015).exp()).clamp(115.0, 520.0);
         }
 
-        let target = [72.0_f32, 72.0, 0.0];
-        let cp = self.camera_pitch.cos();
-        let camera = [
-            target[0] + self.camera_distance * cp * self.camera_yaw.cos(),
-            target[1] + self.camera_distance * cp * self.camera_yaw.sin(),
-            target[2] + self.camera_distance * self.camera_pitch.sin(),
-        ];
-        let normalize = |v: [f32; 3]| {
-            let length = (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).sqrt().max(0.0001);
-            [v[0]/length, v[1]/length, v[2]/length]
-        };
-        let dot = |a: [f32; 3], b: [f32; 3]| a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-        let forward = normalize([target[0]-camera[0], target[1]-camera[1], target[2]-camera[2]]);
-        let right = normalize([forward[1], -forward[0], 0.0]);
-        let up = normalize([
-            right[1]*forward[2] - right[2]*forward[1],
-            right[2]*forward[0] - right[0]*forward[2],
-            right[0]*forward[1] - right[1]*forward[0],
-        ]);
-        let focal = rect.width().min(rect.height()) * 1.18;
-        let project = |p: [f32; 3]| -> Option<Pos2> {
-            let relative = [p[0]-camera[0], p[1]-camera[1], p[2]-camera[2]];
-            let depth = dot(relative, forward);
-            if depth <= 1.0 { return None; }
-            Some(Pos2::new(
-                rect.center().x + dot(relative, right) * focal / depth,
-                rect.center().y - dot(relative, up) * focal / depth,
-            ))
-        };
-        let line3 = |a: [f32; 3], b: [f32; 3], color: Color32, width: f32| {
-            if let (Some(a), Some(b)) = (project(a), project(b)) {
-                painter.line_segment([a, b], Stroke::new(width, color));
-            }
-        };
-        let polygon3 = |points: &[[f32; 3]], fill: Color32, outline: Color32| {
-            let projected = points.iter().filter_map(|p| project(*p)).collect::<Vec<_>>();
-            if projected.len() == points.len() && projected.len() >= 3 {
-                painter.add(egui::Shape::convex_polygon(projected, fill, Stroke::new(1.2, outline)));
-            }
-        };
-
-        // 144 x 144 inch field deck and six-inch perimeter walls.
-        polygon3(&[[0.0,0.0,0.0],[144.0,0.0,0.0],[144.0,144.0,0.0],[0.0,144.0,0.0]],
-            Color32::from_rgb(48,58,57), Color32::from_rgb(190,198,190));
-        for i in (0..=144).step_by(12) {
-            let c = if i % 24 == 0 { Color32::from_gray(105) } else { Color32::from_gray(76) };
-            line3([i as f32,0.0,0.12],[i as f32,144.0,0.12],c,0.7);
-            line3([0.0,i as f32,0.12],[144.0,i as f32,0.12],c,0.7);
-        }
-        for (a,b) in [
-            ([0.0,0.0,0.0],[144.0,0.0,0.0]),
-            ([144.0,0.0,0.0],[144.0,144.0,0.0]),
-            ([144.0,144.0,0.0],[0.0,144.0,0.0]),
-            ([0.0,144.0,0.0],[0.0,0.0,0.0]),
-        ] {
-            let at=[a[0],a[1],6.0]; let bt=[b[0],b[1],6.0];
-            polygon3(&[a,b,bt,at],Color32::from_rgb(70,78,82),Color32::from_rgb(175,185,190));
-            line3(at,bt,Color32::from_rgb(210,215,218),1.4);
-        }
-
-        // Approximate BioBuzz landmarks: four flower stations and four hive cells.
-        for (x,y) in [(96.5_f32,1.4_f32),(142.6,96.5),(47.5,142.6),(1.4,47.5)] {
-            polygon3(&[[x-5.0,y-5.0,0.5],[x+5.0,y-5.0,0.5],[x+5.0,y+5.0,0.5],[x-5.0,y+5.0,0.5]],
-                Color32::from_rgb(110,92,50),Color32::from_rgb(245,207,75));
-            for k in 0..8 {
-                let a=k as f32*std::f32::consts::TAU/8.0;
-                if let Some(p)=project([x+a.cos()*2.6,y+a.sin()*2.6,1.2]) {
-                    painter.circle_filled(p,2.4,Color32::from_rgb(255,218,45));
-                }
-            }
-        }
-        for (center,color) in [
-            (hive_pair_centers(HiveSide::Red,self.red_hive_tipped).0,Color32::from_rgb(185,58,62)),
-            (hive_pair_centers(HiveSide::Red,self.red_hive_tipped).1,Color32::from_rgb(110,45,48)),
-            (hive_pair_centers(HiveSide::Blue,self.blue_hive_tipped).0,Color32::from_rgb(55,105,190)),
-            (hive_pair_centers(HiveSide::Blue,self.blue_hive_tipped).1,Color32::from_rgb(42,65,110)),
-        ] {
-            let (x,y)=center; let z=2.5;
-            polygon3(&[[x-11.0,y-7.0,0.0],[x+11.0,y-7.0,0.0],[x+11.0,y+7.0,0.0],[x-11.0,y+7.0,0.0]],
-                color,color);
-            polygon3(&[[x-11.0,y-7.0,z],[x+11.0,y-7.0,z],[x+11.0,y+7.0,z],[x-11.0,y+7.0,z]],
-                color,Color32::from_rgb(235,235,235));
-            for (xx,yy) in [(-11.0,-7.0),(11.0,-7.0),(11.0,7.0),(-11.0,7.0)] {
-                line3([x+xx,y+yy,0.0],[x+xx,y+yy,z],Color32::from_rgb(220,220,220),1.0);
-            }
-        }
-
-        // Central raised field structure, represented as a simple truss.
-        for (x,y) in [(62.0_f32,62.0_f32),(82.0,62.0),(82.0,82.0),(62.0,82.0)] {
-            line3([x,y,0.0],[x,y,13.0],Color32::from_rgb(205,205,195),2.5);
-        }
-        for z in [4.0_f32,9.0,13.0] {
-            line3([62.0,62.0,z],[82.0,62.0,z],Color32::from_rgb(205,205,195),2.0);
-            line3([82.0,62.0,z],[82.0,82.0,z],Color32::from_rgb(205,205,195),2.0);
-            line3([82.0,82.0,z],[62.0,82.0,z],Color32::from_rgb(205,205,195),2.0);
-            line3([62.0,82.0,z],[62.0,62.0,z],Color32::from_rgb(205,205,195),2.0);
-        }
-
-        for piece in &self.field_pollen {
-            if let Some(p)=project([piece.x,piece.y,piece.radius+0.4]) {
-                let color=match piece.kind {
-                    ElementKind::Pollen=>Color32::from_rgb(255,218,35),
-                    ElementKind::Nectar=>match piece.hive {
-                        Some(HiveSide::Red)=>Color32::from_rgb(235,55,65),
-                        Some(HiveSide::Blue)=>Color32::from_rgb(55,125,245),
-                        None=>Color32::LIGHT_GRAY,
+        if let Some(renderer) = self.renderer_3d.as_ref().map(Arc::clone) {
+            let yaw = self.camera_yaw;
+            let pitch = self.camera_pitch;
+            let distance = self.camera_distance;
+            let aspect = rect.width() / rect.height().max(1.0);
+            let robot_x = self.robot_x;
+            let robot_y = self.robot_y;
+            let heading = self.heading_deg;
+            let red_hives = hive_pair_centers(HiveSide::Red, self.red_hive_tipped);
+            let blue_hives = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped);
+            let pieces = self.field_pollen.iter().filter(|piece| !piece.scored).map(|piece| {
+                let color = match piece.kind {
+                    ElementKind::Pollen => [1.0, 0.82, 0.12],
+                    ElementKind::Nectar => match piece.hive {
+                        Some(HiveSide::Red) => [0.92, 0.16, 0.20],
+                        Some(HiveSide::Blue) => [0.18, 0.42, 0.95],
+                        None => [0.8, 0.8, 0.8],
                     }
                 };
-                let radius=(piece.radius*2.2).clamp(2.0,8.0);
-                painter.circle_filled(p,radius,color);
-                painter.circle_stroke(p,radius,Stroke::new(0.8,Color32::BLACK));
-            }
+                (piece.x, piece.y, piece.radius, color)
+            }).collect::<Vec<_>>();
+            painter.add(egui::PaintCallback {
+                rect,
+                callback: Arc::new(eframe::egui_glow::CallbackFn::new(move |_info, callback_painter| {
+                    renderer.lock().paint(
+                        callback_painter.gl(),
+                        yaw, pitch, distance, aspect,
+                        robot_x, robot_y, heading,
+                        [red_hives.0, red_hives.1],
+                        [blue_hives.0, blue_hives.1],
+                        &pieces,
+                    );
+                })),
+            });
+        } else {
+            painter.text(rect.center(), Align2::CENTER_CENTER,
+                "3D renderer unavailable. Run with the OpenGL backend.",
+                FontId::proportional(16.0), Color32::LIGHT_RED);
         }
 
-        // Robot chassis is a raised, heading-aligned 18 x 18 inch body.
-        let h=self.heading_deg.to_radians();
-        let transform=|x:f32,y:f32,z:f32| -> [f32;3] {
-            [self.robot_x+x*h.cos()+y*h.sin(),self.robot_y-x*h.sin()+y*h.cos(),z]
-        };
-        let corners=[(-9.0,-9.0),(9.0,-9.0),(9.0,9.0),(-9.0,9.0)];
-        let bottom=corners.map(|(x,y)|transform(x,y,0.7));
-        let top=corners.map(|(x,y)|transform(x,y,5.5));
-        for i in 0..4 {
-            let j=(i+1)%4;
-            polygon3(&[bottom[i],bottom[j],top[j],top[i]],Color32::from_rgb(42,53,65),Color32::from_rgb(185,205,220));
-            line3(top[i],top[j],Color32::from_rgb(220,230,238),1.6);
-        }
-        polygon3(&top,Color32::from_rgb(65,88,105),Color32::from_rgb(190,210,225));
-        let intake=[transform(-6.0,8.0,5.8),transform(6.0,8.0,5.8),transform(6.0,10.0,5.8),transform(-6.0,10.0,5.8)];
-        polygon3(&intake,Color32::from_rgb(240,177,54),Color32::WHITE);
-        for (x,y) in corners {
-            if let Some(p)=project(transform(x,y,0.6)) {
-                painter.circle_filled(p,4.0,Color32::from_rgb(20,24,28));
-            }
-        }
-
-        painter.text(rect.left_top()+Vec2::new(12.0,10.0),Align2::LEFT_TOP,
-            "BIOBUZZ · 3D FIELD",FontId::proportional(15.0),Color32::WHITE);
-        painter.text(rect.left_bottom()+Vec2::new(12.0,-12.0),Align2::LEFT_BOTTOM,
-            "Drag to orbit · Scroll to zoom · 144 in × 144 in",FontId::proportional(12.0),Color32::LIGHT_GRAY);
+        painter.text(rect.left_top() + Vec2::new(12.0, 10.0), Align2::LEFT_TOP,
+            "BIOBUZZ · 3D FIELD", FontId::proportional(15.0), Color32::WHITE);
+        painter.text(rect.left_bottom() + Vec2::new(12.0, -12.0), Align2::LEFT_BOTTOM,
+            "Drag to orbit · Scroll to zoom · 144 in × 144 in",
+            FontId::proportional(12.0), Color32::LIGHT_GRAY);
     }
 
     fn draw_field(&self, ui: &mut egui::Ui) {
