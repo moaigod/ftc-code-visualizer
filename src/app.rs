@@ -7,7 +7,7 @@ use crate::importer::{self, OpModeInfo};
 const FIELD_SIZE_IN: f32 = 144.0;
 const ROBOT_SIZE_IN: f32 = 18.0;
 const MAX_SPEED_IN_S: f32 = 48.0;
-const MAX_TURN_DEG_S: f32 = 270.0;
+const MAX_TURN_DEG_S: f32 = 360.0;
 const MAX_POLLEN: u8 = 4;
 const POLLEN_RADIUS_IN: f32 = 1.4;
 const NECTAR_RADIUS_IN: f32 = 1.8;
@@ -661,7 +661,7 @@ impl VisualizerApp {
             let correction = 0.18 * error + 0.025 * self.drive_wheel_velocity_integral[i];
             let motor_command = (targets[i] + correction).clamp(-MAX_SPEED_IN_S, MAX_SPEED_IN_S);
             self.drive_wheel_velocity[i] =
-                approach(self.drive_wheel_velocity[i], motor_command, 190.0 * dt);
+                approach(self.drive_wheel_velocity[i], motor_command, 280.0 * dt);
             self.drive_wheel_encoder_ticks[i] += self.drive_wheel_velocity[i] * dt * 28.0;
         }
 
@@ -1253,30 +1253,48 @@ impl VisualizerApp {
             // Follow a short look-ahead target instead of stopping at every
             // sampled curve point. This avoids the visible stop/start motion
             // caused by snapping to each waypoint independently.
-            while self.autonomous_waypoint_index < self.autonomous_waypoints.len() {
+            while self.autonomous_waypoint_index + 1 < self.autonomous_waypoints.len() {
                 let point = self.autonomous_waypoints[self.autonomous_waypoint_index];
                 let distance = (point.0 - self.robot_x).hypot(point.1 - self.robot_y);
-                if distance < 2.5 {
+                if distance < 3.5 {
                     self.autonomous_waypoint_index += 1;
                 } else {
                     break;
                 }
             }
 
-            if let Some(target) = self.autonomous_waypoints.get(self.autonomous_waypoint_index).copied() {
+            // Aim several inches ahead on the sampled curve instead of
+            // chasing every 1–2 inch sample. This is a simple pure-pursuit
+            // look-ahead and avoids crawling or oscillating between samples.
+            let mut target_index = self.autonomous_waypoint_index;
+            let mut lookahead_distance = 0.0_f32;
+            while target_index + 1 < self.autonomous_waypoints.len()
+                && lookahead_distance < 7.0
+            {
+                let from = self.autonomous_waypoints[target_index];
+                let to = self.autonomous_waypoints[target_index + 1];
+                lookahead_distance += (to.0 - from.0).hypot(to.1 - from.1);
+                target_index += 1;
+            }
+
+            if let Some(target) = self.autonomous_waypoints.get(target_index).copied() {
                 let dx = target.0 - self.odometry_x;
                 let dy = target.1 - self.odometry_y;
                 let distance = dx.hypot(dy);
-                // Ramp speed gradually so the robot does not jump to full
-                // speed on the first simulation frame.
-                // Accelerate toward the path target, then let Rapier resolve
-                // chassis contact, field boundaries, and momentum transfer.
-                let braking_speed = (2.0 * 85.0 * distance.max(0.0)).sqrt();
+                // Base braking on distance to the END of the path, not the
+                // short distance to the current sampled point. Otherwise the
+                // robot brakes at every sample and never reaches useful speed.
+                let endpoint = *self.autonomous_waypoints.last().unwrap_or(&target);
+                let endpoint_distance =
+                    (endpoint.0 - self.odometry_x).hypot(endpoint.1 - self.odometry_y);
+                let braking_speed = (2.0 * 120.0 * endpoint_distance.max(0.0)).sqrt();
                 let current_speed = self.forward_velocity.hypot(self.strafe_velocity);
-                let target_speed = (current_speed + 85.0 * dt).min(34.0).min(braking_speed);
+                let target_speed = (current_speed + 160.0 * dt)
+                    .min(MAX_SPEED_IN_S)
+                    .min(braking_speed);
                 if distance > 0.001 {
                     let desired_heading = self.autonomous_headings
-                        .get(self.autonomous_waypoint_index)
+                        .get(target_index)
                         .and_then(|heading| *heading)
                         .map(|heading_rad| (90.0 - heading_rad.to_degrees()).rem_euclid(360.0))
                         .unwrap_or_else(|| dx.atan2(dy).to_degrees().rem_euclid(360.0));
@@ -1286,9 +1304,10 @@ impl VisualizerApp {
                     let world_vy = dy / distance * target_speed;
                     let target_forward = world_vx * radians.sin() + world_vy * radians.cos();
                     let target_strafe = world_vx * radians.cos() - world_vy * radians.sin();
-                    // P-D heading control: the controller uses the delayed IMU
-                    // estimate and damps rotation using measured angular velocity.
-                    let target_turn = (heading_delta * 4.2 - self.turn_velocity * 0.18)
+                    // Stronger heading correction and a higher angular limit
+                    // let the robot rotate into the commanded Pedro heading
+                    // without requiring translation to stop first.
+                    let target_turn = (heading_delta * 7.0 - self.turn_velocity * 0.22)
                         .clamp(-MAX_TURN_DEG_S, MAX_TURN_DEG_S);
                     self.update_drive_motors(target_forward, target_strafe, target_turn, dt);
                 }
