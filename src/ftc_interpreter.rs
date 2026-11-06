@@ -87,7 +87,7 @@ pub fn interpret(source: &str) -> Program {
         let mut max_acceleration = None;
         let mut reversed = false;
         for option in args.iter().skip(2) {
-            let option_name = option.iter().find_map(Token::ident).unwrap_or("");
+            let option_name = option.iter().rev().find_map(Token::ident).unwrap_or("");
             if option_name == "REVERSE" { reversed = true; }
             if option_name == "FORWARD" { reversed = false; }
             if option_name == "maxRPM" || option_name == "maxAcceleration" {
