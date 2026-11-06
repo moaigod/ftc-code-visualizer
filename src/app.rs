@@ -138,7 +138,7 @@ impl Default for VisualizerApp {
             robot_x: 24.0, robot_y: 24.0, heading_deg: 0.0, drive_speed: MAX_SPEED_IN_S,
             is_running: false, teleop_active: false,
             last_frame: Instant::now(), physics_accumulator: 0.0, elapsed_seconds: 0.0,
-            physics_substeps: 2,
+            physics_substeps: 1,
             surface_friction: 0.95,
             element_friction: 0.72,
             element_restitution: 0.16,
@@ -561,12 +561,18 @@ impl VisualizerApp {
     }
 
     fn shoot_pollen(&mut self) {
-        let source=self.selected_op_mode.and_then(|i|self.op_modes.get(i)).map(|m|m.source.as_str()).unwrap_or("");
-        let program=crate::ftc_interpreter::interpret(source);
-        let has_intake=program.motors.iter().any(|m|matches!(&m.role,crate::ftc_interpreter::MotorRole::Intake));
-        let has_feeder=program.motors.iter().any(|m|matches!(&m.role,crate::ftc_interpreter::MotorRole::Feeder));
-        if has_intake&&!self.intake_running {self.pollen_status="Shot blocked: activate the detected intake first.".to_owned();return;}
-        if has_feeder&&!self.feeder_running {self.pollen_status="Shot blocked: activate the detected feeder first.".to_owned();return;}
+        // shoot_pollen() is only called while the feeder is running, so its
+        // prerequisite is already satisfied. Avoid reparsing the entire Java
+        // OpMode on every shot when the intake is also running.
+        if !self.intake_running {
+            let source=self.selected_op_mode.and_then(|i|self.op_modes.get(i)).map(|m|m.source.as_str()).unwrap_or("");
+            let program=crate::ftc_interpreter::interpret(source);
+            let has_intake=program.motors.iter().any(|m|matches!(&m.role,crate::ftc_interpreter::MotorRole::Intake));
+            if has_intake {
+                self.pollen_status="Shot blocked: activate the detected intake first.".to_owned();
+                return;
+            }
+        }
         if self.carried_elements.is_empty() {self.pollen_status="No scoring elements onboard to shoot.".to_owned();return;}
         if self.shot_cooldown>0.0{return;}
         let target=self.flywheel_target_velocity;
@@ -713,8 +719,8 @@ impl VisualizerApp {
         // This is separate from the fixed 120 Hz game/FTC update cadence.
         let substeps = self.physics_substeps.clamp(1, 8) as usize;
         world.integration_parameters.dt = dt / substeps as f32;
-        world.integration_parameters.num_solver_iterations = 8;
-        world.integration_parameters.max_ccd_substeps = 8;
+        world.integration_parameters.num_solver_iterations = 5;
+        world.integration_parameters.max_ccd_substeps = 4;
 
         let half_field = FIELD_SIZE_IN * 0.5;
         let wall_thickness = 0.5;
@@ -779,9 +785,12 @@ impl VisualizerApp {
                 let distance = dx.hypot(dy);
                 let relative_x = dx * heading.cos() + dy * heading.sin();
                 let relative_y = -dx * heading.sin() + dy * heading.cos();
-                if distance > 0.01 && distance < 22.0 && relative_x.abs() < 15.0 && relative_y > -1.0 {
+                // Intake airflow is local to the mouth, not a field-wide
+                // attraction force. Keep the capture cone narrow and require
+                // the element to be close to the front of the chassis.
+                if distance > 0.01 && distance < 6.0 && relative_x.abs() < 7.0 && relative_y > 5.0 {
                     let pull = (self.intake_motor_velocity / 1800.0).clamp(0.0, 1.0);
-                    let acceleration = 72.0 * pull * (1.0 - distance / 26.0).max(0.15);
+                    let acceleration = 18.0 * pull * (1.0 - distance / 6.0).max(0.0);
                     element_vx += dx / distance * acceleration * dt;
                     element_vy += dy / distance * acceleration * dt;
                 }
