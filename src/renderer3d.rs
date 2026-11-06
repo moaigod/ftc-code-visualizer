@@ -95,10 +95,7 @@ impl FieldRenderer {
             mesh.beam([i as f32,1.5,0.055],[i as f32,142.5,0.055],0.035,0.035,[0.42,0.43,0.40]);
             mesh.beam([1.5,i as f32,0.055],[142.5,i as f32,0.055],0.035,0.035,[0.42,0.43,0.40]);
         }
-        // Alliance driver-station / protected-zone floor tape at opposite ends.
-        mesh.quad([4.0,4.0,0.08],[37.0,4.0,0.08],[37.0,16.0,0.08],[4.0,16.0,0.08],[0.10,0.28,0.95]);
-        mesh.quad([4.0,128.0,0.08],[37.0,128.0,0.08],[37.0,140.0,0.08],[4.0,140.0,0.08],[0.92,0.12,0.15]);
-        mesh.beam([4.0,4.0,0.12],[37.0,4.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
+        // Alliance markings are thin perimeter tape only; no solid floor panels.\n        mesh.beam([4.0,4.0,0.12],[37.0,4.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
         mesh.beam([4.0,16.0,0.12],[37.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
         mesh.beam([4.0,4.0,0.12],[4.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
         mesh.beam([37.0,4.0,0.12],[37.0,16.0,0.12],0.18,0.18,[0.08,0.24,0.95]);
@@ -151,27 +148,47 @@ impl FieldRenderer {
             mesh.cylinder([x,y,9.5],1.05,0.35,[0.95,0.78,0.08]);
             mesh.cylinder([x,y,10.2],0.35,0.35,[0.96,0.90,0.22]);
         }
-        // Three compact driver-station consoles along each alliance end wall.
-        // The colored face panels and rails make the two ends easy to identify.
-        for (y,alliance) in [(7.0,[0.08,0.28,0.92]),(137.0,[0.90,0.10,0.14])] {
-            for x in [9.0,21.0,33.0] {
-                mesh.cuboid([x,y,2.2],[4.6,2.1,2.2],[0.16,0.18,0.17]);
-                mesh.cuboid([x,y-0.15,4.55],[4.2,1.9,0.22],[0.22,0.24,0.22]);
-                mesh.cuboid([x,y-2.0,3.2],[3.6,0.12,1.0],alliance);
-                mesh.beam([x-4.5,y-2.2,4.9],[x+4.5,y-2.2,4.9],0.12,0.12,[0.07,0.08,0.07]);
-                mesh.cylinder([x-2.8,y-1.4,4.95],0.24,0.12,[0.08,0.08,0.08]);
-                mesh.cylinder([x+2.8,y-1.4,4.95],0.24,0.12,[0.08,0.08,0.08]);
-            }
-            // Alliance-color end-wall identification strip.
-            mesh.beam([3.0,y,5.1],[41.0,y,5.1],0.24,0.24,alliance);
-        }
+        // The four hive cells use the exact gameplay coordinates from the 2D
+        // model. Each scoring tray is visibly elevated, with four narrow legs.
         for (x,y) in red_hives {
-            mesh.cuboid([x,y,1.25],[11.0,7.0,1.25],[0.66,0.18,0.20]);
-            mesh.cuboid([x,y,2.6],[10.2,6.2,0.12],[0.78,0.35,0.35]);
+            for dx in [-9.0,9.0] { for dy in [-5.0,5.0] {
+                mesh.beam([x+dx,y+dy,0.25],[x+dx*0.72,y+dy*0.72,15.0],0.32,0.32,[0.42,0.43,0.41]);
+            }}
+            mesh.cuboid([x,y,16.0],[11.0,7.0,1.0],[0.30,0.08,0.10]);
+            mesh.cuboid([x,y,17.1],[10.6,6.6,0.18],[0.84,0.16,0.19]);
+            mesh.beam([x-10.5,y-6.5,17.5],[x+10.5,y-6.5,17.5],0.25,0.25,[0.96,0.25,0.27]);
+            mesh.beam([x+10.5,y-6.5,17.5],[x+10.5,y+6.5,17.5],0.25,0.25,[0.96,0.25,0.27]);
+            mesh.beam([x+10.5,y+6.5,17.5],[x-10.5,y+6.5,17.5],0.25,0.25,[0.96,0.25,0.27]);
+            mesh.beam([x-10.5,y+6.5,17.5],[x-10.5,y-6.5,17.5],0.25,0.25,[0.96,0.25,0.27]);
         }
         for (x,y) in blue_hives {
-            mesh.cuboid([x,y,1.25],[11.0,7.0,1.25],[0.16,0.32,0.68]);
-            mesh.cuboid([x,y,2.6],[10.2,6.2,0.12],[0.32,0.48,0.82]);
+            for dx in [-9.0,9.0] { for dy in [-5.0,5.0] {
+                mesh.beam([x+dx,y+dy,0.25],[x+dx*0.72,y+dy*0.72,15.0],0.32,0.32,[0.42,0.43,0.41]);
+            }}
+            mesh.cuboid([x,y,16.0],[11.0,7.0,1.0],[0.06,0.14,0.40]);
+            mesh.cuboid([x,y,17.1],[10.6,6.6,0.18],[0.12,0.34,0.88]);
+            mesh.beam([x-10.5,y-6.5,17.5],[x+10.5,y-6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
+            mesh.beam([x+10.5,y-6.5,17.5],[x+10.5,y+6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
+            mesh.beam([x+10.5,y+6.5,17.5],[x-10.5,y+6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
+            mesh.beam([x-10.5,y+6.5,17.5],[x-10.5,y-6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
+        }
+        // Flower stations are placed at the exact four 2D field pollen
+        // coordinates: (96.5,1.4), (142.6,96.5), (47.5,142.6), (1.4,47.5).
+        // Low green stems and red flower heads replace guessed station locations.
+        for (x,y,angle) in [
+            (96.5,1.4,0.0),
+            (142.6,96.5,std::f32::consts::FRAC_PI_2),
+            (47.5,142.6,std::f32::consts::PI),
+            (1.4,47.5,-std::f32::consts::FRAC_PI_2)
+        ] {
+            mesh.cylinder([x,y,1.1],0.45,1.0,[0.10,0.40,0.13]);
+            mesh.beam([x,y,1.5],[x,y,5.0],0.20,0.20,[0.10,0.48,0.16]);
+            mesh.cylinder([x,y,5.2],1.2,0.30,[0.78,0.08,0.10]);
+            for petal in 0..5 {
+                let a=angle+std::f32::consts::TAU*petal as f32/5.0;
+                mesh.sphere([x+a.cos()*1.25,y+a.sin()*1.25,5.25],[0.85,0.55,0.28],[0.90,0.12,0.13]);
+            }
+            mesh.sphere([x,y,5.55],[0.52,0.52,0.35],[0.96,0.78,0.10]);
         }
         for (x,y,r,color) in pieces {
             mesh.sphere([*x,*y,*r],[*r,*r,*r],*color);
