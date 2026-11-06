@@ -67,7 +67,7 @@ struct PollenProjectile {
 pub struct VisualizerApp {
     robot_x: f32, robot_y: f32, heading_deg: f32, drive_speed: f32,
     is_running: bool, teleop_active: bool,
-    last_frame: Instant, physics_accumulator: f32, elapsed_seconds: f32,
+    last_frame: Instant, physics_accumulator: f32, loose_physics_accumulator: f32, elapsed_seconds: f32,
     physics_substeps: u8,
     surface_friction: f32,
     element_friction: f32,
@@ -137,7 +137,7 @@ impl Default for VisualizerApp {
         Self {
             robot_x: 24.0, robot_y: 24.0, heading_deg: 0.0, drive_speed: MAX_SPEED_IN_S,
             is_running: false, teleop_active: false,
-            last_frame: Instant::now(), physics_accumulator: 0.0, elapsed_seconds: 0.0,
+            last_frame: Instant::now(), physics_accumulator: 0.0, loose_physics_accumulator: 0.0, elapsed_seconds: 0.0,
             physics_substeps: 1,
             surface_friction: 0.95,
             element_friction: 0.72,
@@ -272,6 +272,7 @@ impl VisualizerApp {
         self.autonomous_status = "Simulation reset to its initial state.".to_owned();
         self.last_frame = Instant::now();
         self.physics_accumulator = 0.0;
+        self.loose_physics_accumulator = 0.0;
     }
 
     fn run_autonomous(&mut self) {
@@ -765,7 +766,10 @@ impl VisualizerApp {
 
         let mut element_bodies = Vec::new();
         for (index, element) in self.field_pollen.iter().enumerate() {
-            if element.scored || (element.from_flower && !self.intake_running) {
+            // Flower pollen is fixed in its flower until the intake
+            // physically reaches it. It should not be pushed around by the
+            // robot or by other loose pieces while waiting to be collected.
+            if element.scored || element.from_flower {
                 continue;
             }
             // Starting Nectar inside an untipped hive is intentionally staged:
@@ -851,10 +855,6 @@ impl VisualizerApp {
         // while unscored pieces bounce off the scoring-cell perimeter.
         for element in &mut self.field_pollen {
             if element.from_flower {
-                // Flower pollen is loose enough to be pulled by the intake,
-                // but it must remain inside the flower's recessed collection
-                // area instead of rolling along the field or escaping sideways.
-                contain_flower_pollen(element);
                 continue;
             }
             if element.scored {
@@ -1438,7 +1438,15 @@ impl VisualizerApp {
             ctx.request_repaint();
         }
 
-        self.update_loose_pollen_physics(dt);
+        // Loose-object contact simulation runs at 60 Hz. FTC motors,
+        // autonomous control, and mechanism timers continue at 120 Hz.
+        self.loose_physics_accumulator += dt;
+        const LOOSE_PHYSICS_DT: f32 = 1.0 / 60.0;
+        if self.loose_physics_accumulator >= LOOSE_PHYSICS_DT {
+            let physics_dt = self.loose_physics_accumulator.min(LOOSE_PHYSICS_DT * 2.0);
+            self.update_loose_pollen_physics(physics_dt);
+            self.loose_physics_accumulator = (self.loose_physics_accumulator - physics_dt).max(0.0);
+        }
 
         // A 50 Hz localization update with small encoder/IMU-like lag and
         // deterministic measurement noise. Autonomous and telemetry consume
@@ -1920,41 +1928,6 @@ fn collide_element_with_hive(element: &mut Pollen, center: (f32, f32), side: Hiv
                 element.vy -= 1.35 * into_wall * ny;
             }
         }
-    }
-}
-
-fn contain_flower_pollen(element: &mut Pollen) {
-    // The four flowers sit against the field perimeter. Keep their pollen in
-    // a shallow, 14-inch-wide pocket while allowing it to move inward toward
-    // a robot's intake. The field wall forms the outer edge of each pocket.
-    let radius = element.radius.max(0.0);
-    let (min_x, max_x, min_y, max_y) = if element.y < 72.0 {
-        // Bottom flower.
-        (96.5 - 7.0 + radius, 96.5 + 7.0 - radius, radius, 8.0 - radius)
-    } else if element.x > 72.0 {
-        // Right flower.
-        (FIELD_SIZE_IN - 8.0 + radius, FIELD_SIZE_IN - radius, 96.5 - 7.0 + radius, 96.5 + 7.0 - radius)
-    } else if element.y > 72.0 {
-        // Top flower.
-        (47.5 - 7.0 + radius, 47.5 + 7.0 - radius, FIELD_SIZE_IN - 8.0 + radius, FIELD_SIZE_IN - radius)
-    } else {
-        // Left flower.
-        (radius, 8.0 - radius, 47.5 - 7.0 + radius, 47.5 + 7.0 - radius)
-    };
-
-    if element.x < min_x {
-        element.x = min_x;
-        element.vx = element.vx.abs() * 0.25;
-    } else if element.x > max_x {
-        element.x = max_x;
-        element.vx = -element.vx.abs() * 0.25;
-    }
-    if element.y < min_y {
-        element.y = min_y;
-        element.vy = element.vy.abs() * 0.25;
-    } else if element.y > max_y {
-        element.y = max_y;
-        element.vy = -element.vy.abs() * 0.25;
     }
 }
 
