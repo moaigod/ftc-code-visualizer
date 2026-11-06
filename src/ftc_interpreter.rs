@@ -1106,6 +1106,29 @@ mod ftccv_tests {
     }
 
     #[test]
+    fn parses_ftccv_pinpoint_offsets_resolution_and_directions() {
+        let source = r#"
+            ftcCV.hardware.pinpoint(
+                "pinpoint",
+                ftcCV.PinpointPodType.GOBILDA_4_BAR,
+                -84.0,
+                -168.0,
+                ftcCV.EncoderDirection.FORWARD,
+                ftcCV.EncoderDirection.REVERSED,
+                null
+            );
+        "#;
+        let program = interpret(source);
+        let pinpoint = program.pinpoint.expect("Pinpoint config should be parsed");
+        assert_eq!(pinpoint.hardware_name, "pinpoint");
+        assert_eq!(pinpoint.x_offset_mm, Some(-84.0));
+        assert_eq!(pinpoint.y_offset_mm, Some(-168.0));
+        assert!(!pinpoint.x_direction_reversed);
+        assert!(pinpoint.y_direction_reversed);
+        assert_eq!(pinpoint.ticks_per_mm, Some(13.2629));
+    }
+
+    #[test]
     fn reports_ftccv_hardware_names_that_do_not_match_hardware_map() {
         let source = r#"
             ftcCV.hardware.motor("intakeMotor", ftcCV.MotorType.INTAKE);
