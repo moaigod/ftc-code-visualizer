@@ -1305,41 +1305,81 @@ impl VisualizerApp {
         }
 
         if self.autonomous_running {
-            // Follow a short look-ahead target instead of stopping at every
-            // sampled curve point. This avoids the visible stop/start motion
-            // caused by snapping to each waypoint independently.
-            while self.autonomous_waypoint_index < self.autonomous_waypoints.len() {
-                let point = self.autonomous_waypoints[self.autonomous_waypoint_index];
-                // Progress and steering must use the same localized pose.
-                // Mixing ground-truth Rapier coordinates with delayed odometry
-                // can advance the path index past a target the controller has
-                // not actually reached yet.
-                let distance = (point.0 - self.odometry_x).hypot(point.1 - self.odometry_y);
-                let is_final_point =
-                    self.autonomous_waypoint_index + 1 == self.autonomous_waypoints.len();
-                let reach_radius = if is_final_point { 2.5 } else { 3.5 };
-                if distance < reach_radius {
-                    self.autonomous_waypoint_index += 1;
-                } else {
-                    break;
+            // Re-localize against the remaining polyline every control step.
+            // This is the recovery behavior: if odometry drifts sideways or the
+            // robot is pushed off the route, steering points back toward the
+            // closest point on the path instead of continuing to chase a stale
+            // waypoint index.
+            let path_len = self.autonomous_waypoints.len();
+            let mut path_target: Option<(usize, (f32, f32))> = None;
+            if path_len == 1 {
+                path_target = Some((0, self.autonomous_waypoints[0]));
+            } else if path_len > 1 {
+                let search_start = self.autonomous_waypoint_index.saturating_sub(1).min(path_len - 2);
+                let mut best: Option<(f32, usize, f32, f32)> = None;
+                for segment in search_start..(path_len - 1) {
+                    let a = self.autonomous_waypoints[segment];
+                    let b = self.autonomous_waypoints[segment + 1];
+                    let sx = b.0 - a.0;
+                    let sy = b.1 - a.1;
+                    let length_sq = sx * sx + sy * sy;
+                    let t = if length_sq > 1.0e-6 {
+                        (((self.odometry_x - a.0) * sx + (self.odometry_y - a.1) * sy)
+                            / length_sq).clamp(0.0, 1.0)
+                    } else { 0.0 };
+                    let px = a.0 + sx * t;
+                    let py = a.1 + sy * t;
+                    let dx = self.odometry_x - px;
+                    let dy = self.odometry_y - py;
+                    // A small forward-progress penalty prevents jumping to a
+                    // distant later section when the path doubles back nearby.
+                    let score = dx * dx + dy * dy
+                        + (segment.saturating_sub(self.autonomous_waypoint_index) as f32) * 0.08;
+                    if best.map_or(true, |current| score < current.0) {
+                        best = Some((score, segment, px, py));
+                    }
+                }
+
+                if let Some((_, nearest_segment, nearest_x, nearest_y)) = best {
+                    self.autonomous_waypoint_index = nearest_segment;
+                    let endpoint = self.autonomous_waypoints[path_len - 1];
+                    let endpoint_distance =
+                        (endpoint.0 - self.odometry_x).hypot(endpoint.1 - self.odometry_y);
+                    if endpoint_distance <= 2.5 {
+                        self.autonomous_waypoint_index = path_len;
+                    } else {
+                        // Pure-pursuit lookahead starts at the projected point
+                        // on the path, not at a sampled waypoint. This keeps
+                        // steering continuous and actively corrects cross-track
+                        // error after disturbances.
+                        let mut target_x = nearest_x;
+                        let mut target_y = nearest_y;
+                        let mut remaining = 8.0_f32;
+                        let mut segment = nearest_segment;
+                        while segment + 1 < path_len {
+                            let next = self.autonomous_waypoints[segment + 1];
+                            let dx = next.0 - target_x;
+                            let dy = next.1 - target_y;
+                            let length = dx.hypot(dy);
+                            if length > 1.0e-4 {
+                                if remaining <= length {
+                                    target_x += dx * (remaining / length);
+                                    target_y += dy * (remaining / length);
+                                    break;
+                                }
+                                remaining -= length;
+                            }
+                            target_x = next.0;
+                            target_y = next.1;
+                            segment += 1;
+                        }
+                        let target_index = (segment + 1).min(path_len - 1);
+                        path_target = Some((target_index, (target_x, target_y)));
+                    }
                 }
             }
 
-            // Aim several inches ahead on the sampled curve instead of
-            // chasing every 1–2 inch sample. This is a simple pure-pursuit
-            // look-ahead and avoids crawling or oscillating between samples.
-            let mut target_index = self.autonomous_waypoint_index;
-            let mut lookahead_distance = 0.0_f32;
-            while target_index + 1 < self.autonomous_waypoints.len()
-                && lookahead_distance < 7.0
-            {
-                let from = self.autonomous_waypoints[target_index];
-                let to = self.autonomous_waypoints[target_index + 1];
-                lookahead_distance += (to.0 - from.0).hypot(to.1 - from.1);
-                target_index += 1;
-            }
-
-            if let Some(target) = self.autonomous_waypoints.get(target_index).copied() {
+            if let Some((target_index, target)) = path_target {
                 let dx = target.0 - self.odometry_x;
                 let dy = target.1 - self.odometry_y;
                 let distance = dx.hypot(dy);
