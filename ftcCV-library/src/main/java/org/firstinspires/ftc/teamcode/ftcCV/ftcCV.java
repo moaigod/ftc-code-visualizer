@@ -113,6 +113,14 @@ public final class ftcCV {
         public synchronized PinpointConfig pinpoint(
                 String name, PinpointPodType podType,
                 double xOffsetMm, double yOffsetMm,
+                EncoderDirection xDirection, EncoderDirection yDirection) {
+            return pinpoint(name, podType, xOffsetMm, yOffsetMm,
+                    xDirection, yDirection, null);
+        }
+
+        public synchronized PinpointConfig pinpoint(
+                String name, PinpointPodType podType,
+                double xOffsetMm, double yOffsetMm,
                 EncoderDirection xDirection, EncoderDirection yDirection,
                 Double ticksPerMm) {
             if (name == null || name.trim().isEmpty() || podType == null
