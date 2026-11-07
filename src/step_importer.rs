@@ -27,7 +27,19 @@ pub struct StepScene {
 pub fn load(path: &Path) -> Result<StepScene, String> {
     let bytes = std::fs::read(path)
         .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-    let model = oxideav_step::read_step(&bytes)
+    // Use a deliberately coarser tessellation for an interactive field view.
+    // This reduces curved-surface triangle counts while retaining the overall
+    // shape of field structures. AP242 files that already contain triangles
+    // cannot be re-tessellated by this setting.
+    let options = oxideav_step::ReadOptions {
+        tolerance: oxideav_step::Tolerance {
+            relative: 0.01,
+            absolute: None,
+            max_angle: 0.35,
+        },
+        ..Default::default()
+    };
+    let model = oxideav_step::read_step_with(&bytes, &options)
         .map_err(|error| format!("STEP import failed: {error}"))?;
 
     let inches_per_model_unit = model.length_unit_metres * 39.370_078_740_157_48;
@@ -68,6 +80,22 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
     transparent_vertices = all_vertices[opaque_len..].to_vec();
 
     let triangle_count = (opaque_vertices.len() + transparent_vertices.len()) / 3;
+    let transparent_min_alpha = transparent_vertices.iter()
+        .map(|vertex| vertex[6])
+        .fold(1.0_f32, f32::min);
+    let transparent_max_alpha = transparent_vertices.iter()
+        .map(|vertex| vertex[6])
+        .fold(0.0_f32, f32::max);
+    let mut warnings = model.warnings;
+    if transparent_vertices.is_empty() {
+        warnings.push("No alpha-transparent triangles were identified in the STEP styles.".to_owned());
+    } else if transparent_min_alpha >= 0.999 {
+        warnings.push("Transparent geometry has no usable alpha values.".to_owned());
+    }
+    warnings.push(format!(
+        "Mesh quality: reduced · transparent vertices: {} · alpha range: {:.2}–{:.2}",
+        transparent_vertices.len(), transparent_min_alpha, transparent_max_alpha
+    ));
     Ok(StepScene {
         opaque_vertices: Arc::new(opaque_vertices),
         transparent_vertices: Arc::new(transparent_vertices),
@@ -75,7 +103,7 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         occurrence_count,
         triangle_count,
         alignment,
-        warnings: model.warnings,
+        warnings,
     })
 }
 
