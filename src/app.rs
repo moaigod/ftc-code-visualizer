@@ -2545,8 +2545,9 @@ impl eframe::App for VisualizerApp {
                             match crate::step_importer::load(&path) {
                                 Ok(scene) => {
                                     self.step_import_status = format!(
-                                        "CAD loaded: {} parts, {} instances, {} triangles",
-                                        scene.part_count, scene.occurrence_count, scene.triangle_count
+                                        "CAD loaded: {} parts, {} instances, {} triangles · {}",
+                                        scene.part_count, scene.occurrence_count, scene.triangle_count,
+                                        scene.alignment
                                     );
                                     if !scene.warnings.is_empty() {
                                         self.step_import_status.push_str(&format!(
