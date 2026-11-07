@@ -56,7 +56,9 @@ impl FieldRenderer {
             gl.enable_vertex_attrib_array(0);
             gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 24, 0);
             gl.enable_vertex_attrib_array(1);
-            gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
+            gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 28, 12);
+            gl.enable_vertex_attrib_array(2);
+            gl.vertex_attrib_pointer_f32(2, 1, glow::FLOAT, false, 28, 24);
             gl.bind_vertex_array(None);
             Self {
                 program, vao, vbo, cad_vbo, transparent_vbo,
@@ -203,11 +205,9 @@ impl FieldRenderer {
 
             // Dynamic robot and game pieces use the compact opaque vertex format.
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 24, 0);
-            gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
-            gl.vertex_attrib_pointer_f32(2, 1, glow::FLOAT, false, 24, 20);
-            gl.disable_vertex_attrib_array(2);
-            gl.vertex_attrib1_f32(2, 1.0);
+            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 28, 0);
+            gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 28, 12);
+            gl.vertex_attrib_pointer_f32(2, 1, glow::FLOAT, false, 28, 24);
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&mesh.vertices), glow::DYNAMIC_DRAW);
             gl.draw_arrays(glow::TRIANGLES, 0, mesh.vertices.len() as i32);
             gl.bind_vertex_array(None);
@@ -218,11 +218,11 @@ impl FieldRenderer {
 }
 
 #[derive(Default)]
-struct Mesh { vertices: Vec<[f32;6]> }
+struct Mesh { vertices: Vec<[f32;7]> }
 
 impl Mesh {
     fn tri(&mut self,a:[f32;3],b:[f32;3],c:[f32;3],color:[f32;3]) {
-        for p in [a,b,c] { self.vertices.push([p[0],p[1],p[2],color[0],color[1],color[2]]); }
+        for p in [a,b,c] { self.vertices.push([p[0],p[1],p[2],color[0],color[1],color[2],1.0]); }
     }
     fn quad(&mut self,a:[f32;3],b:[f32;3],c:[f32;3],d:[f32;3],color:[f32;3]) {
         self.tri(a,b,c,color); self.tri(a,c,d,color);
