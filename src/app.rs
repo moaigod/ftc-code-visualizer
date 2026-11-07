@@ -284,7 +284,7 @@ impl VisualizerApp {
     }
 
     fn poll_step_load(&mut self, ctx: &egui::Context) {
-        let Some(receiver) = self.step_load_receiver.as_ref() else { return; };
+        let Some(receiver) = self.step_load_receiver.take() else { return; };
         match receiver.try_recv() {
             Ok(Ok(scene)) => {
                 self.step_import_status = format!(
@@ -297,18 +297,16 @@ impl VisualizerApp {
                     ));
                 }
                 self.step_scene = Some(Arc::new(scene));
-                self.step_load_receiver = None;
             }
             Ok(Err(error)) => {
                 self.step_import_status = error;
-                self.step_load_receiver = None;
             }
             Err(mpsc::TryRecvError::Empty) => {
+                self.step_load_receiver = Some(receiver);
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.step_import_status = "STEP loading stopped unexpectedly.".to_owned();
-                self.step_load_receiver = None;
             }
         }
     }
