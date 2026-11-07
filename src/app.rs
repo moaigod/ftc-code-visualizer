@@ -2012,7 +2012,7 @@ impl VisualizerApp {
                         transparent_vertices.as_ref().map(|vertices| vertices.as_slice()),
                     );
                 })),
-            });;
+            });
         } else {
             painter.text(rect.center(), Align2::CENTER_CENTER,
                 "3D renderer unavailable. Run with the OpenGL backend.",
