@@ -1,5 +1,5 @@
 use std::time::Instant;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, TextureHandle, Vec2};
 use gilrs::{Axis, Button, Gilrs};
 use rapier2d::prelude::*;
@@ -138,6 +138,7 @@ pub struct VisualizerApp {
     renderer_3d: Option<Arc<egui::mutex::Mutex<crate::renderer3d::FieldRenderer>>>,
     step_scene: Option<Arc<crate::step_importer::StepScene>>,
     step_import_status: String,
+    step_load_receiver: Option<mpsc::Receiver<Result<crate::step_importer::StepScene, String>>>,
 }
 
 impl Default for VisualizerApp {
@@ -216,6 +217,7 @@ impl Default for VisualizerApp {
             renderer_3d: None,
             step_scene: None,
             step_import_status: "Looking for a STEP field in assets/…".to_owned(),
+            step_load_receiver: None,
         }
     }
 }
@@ -269,12 +271,25 @@ impl VisualizerApp {
             return;
         };
 
-        match crate::step_importer::load(path) {
-            Ok(scene) => {
+        let path = path.clone();
+        let display_path = path.display().to_string();
+        let (sender, receiver) = mpsc::channel();
+        self.step_load_receiver = Some(receiver);
+        self.step_import_status = format!("Loading {} in the background…", display_path);
+        std::thread::spawn(move || {
+            let result = crate::step_importer::load(&path)
+                .map_err(|error| format!("Could not load {}: {error}", path.display()));
+            let _ = sender.send(result);
+        });
+    }
+
+    fn poll_step_load(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = self.step_load_receiver.as_ref() else { return; };
+        match receiver.try_recv() {
+            Ok(Ok(scene)) => {
                 self.step_import_status = format!(
                     "Field loaded: {} parts, {} instances, {} triangles · {}",
-                    scene.part_count, scene.occurrence_count, scene.triangle_count,
-                    scene.alignment
+                    scene.part_count, scene.occurrence_count, scene.triangle_count, scene.alignment
                 );
                 if !scene.warnings.is_empty() {
                     self.step_import_status.push_str(&format!(
@@ -282,11 +297,18 @@ impl VisualizerApp {
                     ));
                 }
                 self.step_scene = Some(Arc::new(scene));
+                self.step_load_receiver = None;
             }
-            Err(error) => {
-                self.step_import_status = format!(
-                    "Could not load {}: {error}", path.display()
-                );
+            Ok(Err(error)) => {
+                self.step_import_status = error;
+                self.step_load_receiver = None;
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.step_import_status = "STEP loading stopped unexpectedly.".to_owned();
+                self.step_load_receiver = None;
             }
         }
     }
@@ -2548,6 +2570,7 @@ fn approach(current: f32, target: f32, max_delta: f32) -> f32 {
 
 impl eframe::App for VisualizerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_step_load(ctx);
         self.refresh_motor_config_cache();
         self.load_field_image(ctx);
         let keyboard_intake = ctx.input(|input| input.key_pressed(egui::Key::E));
