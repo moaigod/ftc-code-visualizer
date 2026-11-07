@@ -116,10 +116,12 @@ impl FieldRenderer {
                         (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3.0,
                         (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3.0,
                     );
-                    (center.distance_squared(eye), index)
+                    ((center - eye).dot((target - eye).normalize()), index)
                 })
                 .collect::<Vec<_>>();
-            triangle_order.sort_by(|a, b| b.0.total_cmp(&a.0));
+            // Farther geometry has a smaller signed depth along the view
+            // direction. Sort far-to-near for alpha compositing.
+            triangle_order.sort_by(|a, b| a.0.total_cmp(&b.0));
             self.transparent_sorted.reserve(vertices.len());
             for (_, index) in triangle_order {
                 let start = index * 3;
