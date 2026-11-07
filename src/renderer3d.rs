@@ -8,9 +8,7 @@ pub struct FieldRenderer {
     cad_vbo: glow::Buffer,
     transparent_vbo: glow::Buffer,
     cad_vertex_count: i32,
-    transparent_vertex_count: i32,
     cad_source_ptr: usize,
-    transparent_source_ptr: usize,
 }
 
 impl FieldRenderer {
@@ -63,9 +61,7 @@ impl FieldRenderer {
             Self {
                 program, vao, vbo, cad_vbo, transparent_vbo,
                 cad_vertex_count: 0,
-                transparent_vertex_count: 0,
                 cad_source_ptr: 0,
-                transparent_source_ptr: 0,
             }
         }
     }
@@ -117,20 +113,7 @@ impl FieldRenderer {
             self.cad_source_ptr = 0;
             self.cad_vertex_count = 0;
         }
-        let transparent_source_ptr = transparent_vertices.map_or(0, |vertices| vertices.as_ptr() as usize);
-        if let Some(vertices) = transparent_vertices {
-            if transparent_source_ptr != self.transparent_source_ptr || vertices.len() as i32 != self.transparent_vertex_count {
-                unsafe {
-                    gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.transparent_vbo));
-                    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(vertices), glow::STATIC_DRAW);
-                }
-                self.transparent_source_ptr = transparent_source_ptr;
-                self.transparent_vertex_count = vertices.len() as i32;
-            }
-        } else {
-            self.transparent_source_ptr = 0;
-            self.transparent_vertex_count = 0;
-        }
+
 
         // Flower pollen remains represented by the live game-piece data only;
         // do not create separate decorative flower props at pollen spawn points.
