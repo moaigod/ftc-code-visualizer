@@ -12,8 +12,10 @@ use oxideav_step::{StepModel, Transform};
 
 #[derive(Debug)]
 pub struct StepScene {
-    /// Interleaved OpenGL vertices: position XYZ followed by colour RGB.
-    pub vertices: Arc<Vec<[f32; 6]>>,
+    /// Opaque CAD vertices: position XYZ, colour RGB, alpha.
+    pub opaque_vertices: Arc<Vec<[f32; 7]>>,
+    /// Transparent CAD vertices: position XYZ, colour RGB, alpha.
+    pub transparent_vertices: Arc<Vec<[f32; 7]>>,
     pub part_count: usize,
     pub occurrence_count: usize,
     pub triangle_count: usize,
@@ -33,7 +35,8 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         return Err("The STEP file declares an invalid length unit.".to_owned());
     }
 
-    let mut vertices = Vec::with_capacity(model.triangle_count().saturating_mul(3));
+    let mut opaque_vertices = Vec::with_capacity(model.triangle_count().saturating_mul(3));
+    let mut transparent_vertices = Vec::new();
     let mut active_parts = HashSet::new();
     let mut occurrence_count = 0usize;
 
@@ -45,23 +48,29 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
             inches_per_model_unit,
             &mut active_parts,
             &mut occurrence_count,
-            &mut vertices,
+            &mut opaque_vertices,
+            &mut transparent_vertices,
             0,
         )?;
     }
 
-    if vertices.is_empty() {
+    if opaque_vertices.is_empty() && transparent_vertices.is_empty() {
         return Err("The STEP file was parsed, but no visible triangles were produced.".to_owned());
     }
 
-    // STEP files may use X-up, Y-up, or Z-up depending on the CAD authoring
-    // convention. Detect the thin (vertical) axis from the complete assembly
-    // bounds, then map the two broad axes into the simulator's X/Y plane.
-    let alignment = fit_to_field(&mut vertices);
+    // Fit both material groups together so they share exactly the same transform.
+    let mut all_vertices = Vec::with_capacity(opaque_vertices.len() + transparent_vertices.len());
+    all_vertices.extend_from_slice(&opaque_vertices);
+    all_vertices.extend_from_slice(&transparent_vertices);
+    let alignment = fit_to_field(&mut all_vertices);
+    let opaque_len = opaque_vertices.len();
+    opaque_vertices.copy_from_slice(&all_vertices[..opaque_len]);
+    transparent_vertices = all_vertices[opaque_len..].to_vec();
 
-    let triangle_count = vertices.len() / 3;
+    let triangle_count = (opaque_vertices.len() + transparent_vertices.len()) / 3;
     Ok(StepScene {
-        vertices: Arc::new(vertices),
+        opaque_vertices: Arc::new(opaque_vertices),
+        transparent_vertices: Arc::new(transparent_vertices),
         part_count: model.parts.len(),
         occurrence_count,
         triangle_count,
@@ -78,7 +87,8 @@ fn append_occurrence(
     inches_per_model_unit: f64,
     active_parts: &mut HashSet<usize>,
     occurrence_count: &mut usize,
-    output: &mut Vec<[f32; 6]>,
+    opaque_output: &mut Vec<[f32; 7]>,
+    transparent_output: &mut Vec<[f32; 7]>,
     depth: usize,
 ) -> Result<(), String> {
     const MAX_ASSEMBLY_DEPTH: usize = 256;
@@ -104,7 +114,8 @@ fn append_occurrence(
                 .and_then(|colour| *colour)
                 .or(shape.colour)
                 .unwrap_or([0.62, 0.64, 0.62, 1.0]);
-            let rgb = [colour[0], colour[1], colour[2]];
+            let rgba = [colour[0], colour[1], colour[2], colour[3].clamp(0.0, 1.0)];
+            let output = if rgba[3] < 0.999 { &mut *transparent_output } else { &mut *opaque_output };
 
             for &vertex_index in triangle {
                 let Some(position) = shape.mesh.positions.get(vertex_index as usize) else {
@@ -116,7 +127,7 @@ fn append_occurrence(
                     (p[0] * inches_per_model_unit) as f32,
                     (p[1] * inches_per_model_unit) as f32,
                     (p[2] * inches_per_model_unit) as f32,
-                    rgb[0], rgb[1], rgb[2],
+                    rgba[0], rgba[1], rgba[2], rgba[3],
                 ]);
             }
         }
@@ -139,7 +150,7 @@ fn append_occurrence(
     Ok(())
 }
 
-fn fit_to_field(vertices: &mut [[f32; 6]]) -> String {
+fn fit_to_field(vertices: &mut [[f32; 7]]) -> String {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
     for vertex in vertices.iter() {
