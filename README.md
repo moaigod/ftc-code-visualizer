@@ -78,6 +78,6 @@ Flower pollen is stacked at the edge of each side of the field: bottom (96.5, 1.
 
 ## STEP CAD field importer
 
-The 3D view can load STEP / STP / P21 CAD assemblies with **Load STEP** in the top bar. The importer tessellates part geometry, expands assembly instances with their placement transforms, applies STEP length units as inches, and uses source surface colours when available. **Use procedural field** restores the built-in fallback geometry. The 2D view and its renderer are unchanged.
+The app opens directly in 3D mode and automatically loads the first STEP / STP / P21 CAD file found in the top-level `assets/` directory (preferring a filename containing `field`). The importer tessellates part geometry, expands assembly instances with their placement transforms, applies STEP length units as inches, and uses source surface colours when available. There is no procedural 3D field fallback; if no supported CAD file is found, the status text explains what to place in `assets/`. The 2D view and its renderer are unchanged.
 
 The reader is provided by `oxideav-step` (MIT), built with its standard-library-only feature set. The importer detects whether the STEP assembly is X-up, Y-up, or Z-up from its bounding dimensions, maps the two broad axes into the 144 × 144 inch field plane, and places the lowest CAD geometry at floor height. It reports the detected alignment and source footprint after loading.
