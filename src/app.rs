@@ -209,7 +209,7 @@ impl Default for VisualizerApp {
             autonomous_waiting_for_condition: false,
             autonomous_running: false,
             autonomous_status: "No autonomous program running.".to_owned(),
-            three_d_mode: false,
+            three_d_mode: true,
             camera_yaw: -0.72,
             camera_pitch: 0.68,
             camera_distance: 245.0,
