@@ -1996,7 +1996,8 @@ impl VisualizerApp {
                 };
                 (piece.x, piece.y, piece.radius, color)
             }).collect::<Vec<_>>();
-            let cad_vertices = self.step_scene.as_ref().map(|scene| Arc::clone(&scene.vertices));
+            let cad_vertices = self.step_scene.as_ref().map(|scene| Arc::clone(&scene.opaque_vertices));
+            let transparent_vertices = self.step_scene.as_ref().map(|scene| Arc::clone(&scene.transparent_vertices));
             painter.add(egui::PaintCallback {
                 rect,
                 callback: Arc::new(eframe::egui_glow::CallbackFn::new(move |_info, callback_painter| {
@@ -2008,6 +2009,7 @@ impl VisualizerApp {
                         [blue_hives.0, blue_hives.1],
                         &pieces,
                         cad_vertices.as_ref().map(|vertices| vertices.as_slice()),
+                        transparent_vertices.as_ref().map(|vertices| vertices.as_slice()),
                     );
                 })),
             });
