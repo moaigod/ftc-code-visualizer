@@ -72,6 +72,7 @@ pub fn load_many(paths: &[std::path::PathBuf]) -> Result<StepScene, String> {
                 root,
                 &Transform::IDENTITY,
                 inches_per_model_unit,
+                &[],
                 &mut active_parts,
                 &mut file_occurrences,
                 &mut opaque_vertices,
@@ -141,6 +142,7 @@ fn append_occurrence(
     occurrence: &oxideav_step::Occurrence,
     parent_transform: &Transform,
     inches_per_model_unit: f64,
+    parent_occurrence_path: &[u64],
     active_parts: &mut HashSet<usize>,
     occurrence_count: &mut usize,
     opaque_output: &mut Vec<[f32; 7]>,
@@ -163,11 +165,34 @@ fn append_occurrence(
 
     *occurrence_count += 1;
     let world_transform = parent_transform.compose(&occurrence.transform);
+    // Context-dependent AP242 styles are stored separately from shared part
+    // geometry. Build the current assembly path so transparent overrides are
+    // applied to the correct instance rather than lost on the opaque fallback.
+    let mut occurrence_path = parent_occurrence_path.to_vec();
+    if let Some(id) = occurrence.placed_by.or(occurrence.id) {
+        occurrence_path.push(id);
+    }
+    let contextual_styles: Vec<_> = model.occurrence_colours.iter()
+        .filter(|style| {
+            style.path.len() == occurrence_path.len()
+                && style.path.iter().all(|id| occurrence_path.contains(id))
+        })
+        .collect();
 
     for shape in &part.shapes {
         for (triangle_index, triangle) in shape.mesh.triangles.iter().enumerate() {
-            let colour = shape.triangle_colours.get(triangle_index)
-                .and_then(|colour| *colour)
+            let face_id = shape.triangle_faces.get(triangle_index).copied();
+            // Face-level contextual styles take precedence over item-level
+            // contextual styles, followed by the ordinary STEP face/item style.
+            let contextual_colour = face_id
+                .and_then(|face| contextual_styles.iter().rev()
+                    .find(|style| style.item == face)
+                    .map(|style| style.colour))
+                .or_else(|| contextual_styles.iter().rev()
+                    .find(|style| style.item == shape.item)
+                    .map(|style| style.colour));
+            let colour = contextual_colour
+                .or_else(|| shape.triangle_colours.get(triangle_index).and_then(|colour| *colour))
                 .or(shape.colour)
                 .unwrap_or([0.62, 0.64, 0.62, 1.0]);
             let rgba = [colour[0], colour[1], colour[2], colour[3].clamp(0.0, 1.0)];
@@ -195,6 +220,7 @@ fn append_occurrence(
             child,
             &world_transform,
             inches_per_model_unit,
+            &occurrence_path,
             active_parts,
             occurrence_count,
             opaque_output,
