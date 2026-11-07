@@ -188,15 +188,22 @@ fn append_occurrence(
 /// a regular 3D grid; triangles that collapse or become visually negligible
 /// are discarded. Colours and alpha remain attached to their original face.
 fn simplify_display_mesh(vertices: &mut Vec<[f32; 7]>, grid: f32, min_area: f32) -> usize {
-    let mut simplified = Vec::with_capacity(vertices.len());
+    let triangle_count = vertices.len() / 3;
+    let mut write = 0usize;
     let mut removed = 0usize;
 
-    for triangle in vertices.chunks_exact(3) {
-        let mut snapped = [[0.0_f32; 7]; 3];
+    // Compact in place so simplification does not allocate a second copy of
+    // the multi-million-vertex field mesh.
+    for triangle_index in 0..triangle_count {
+        let base = triangle_index * 3;
+        let mut snapped = [
+            vertices[base],
+            vertices[base + 1],
+            vertices[base + 2],
+        ];
         for corner in 0..3 {
-            snapped[corner] = triangle[corner];
             for axis in 0..3 {
-                snapped[corner][axis] = (triangle[corner][axis] / grid).round() * grid;
+                snapped[corner][axis] = (snapped[corner][axis] / grid).round() * grid;
             }
         }
 
@@ -217,11 +224,11 @@ fn simplify_display_mesh(vertices: &mut Vec<[f32; 7]>, grid: f32, min_area: f32)
             continue;
         }
 
-        simplified.extend_from_slice(&snapped);
+        vertices[write..write + 3].copy_from_slice(&snapped);
+        write += 3;
     }
 
-    vertices.clear();
-    *vertices = simplified;
+    vertices.truncate(write);
     removed
 }
 
