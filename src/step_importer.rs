@@ -184,8 +184,8 @@ fn fit_to_field(vertices: &mut [[f32; 6]]) -> String {
     format!(
         "Auto-aligned {}-up CAD · source footprint {:.1} × {:.1} in · fit {:.4}× · aspect {:.3}",
         axis_name[vertical_axis],
-        extent[x_axis] * 39.370_078_7,
-        extent[y_axis] * 39.370_078_7,
+        extent[x_axis],
+        extent[y_axis],
         scale,
         aspect,
     )
