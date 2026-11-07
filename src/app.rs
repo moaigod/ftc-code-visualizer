@@ -2919,7 +2919,7 @@ impl eframe::App for VisualizerApp {
             if self.three_d_mode {
                 ui.separator();
                 ui.label("3D CAD import");
-                ui.label(&self.step_import_status);
+                ui.add(egui::Label::new(&self.step_import_status).wrap());
             }
                 });
         });
