@@ -9,7 +9,6 @@ pub struct FieldRenderer {
     opaque_vertex_count: i32,
     transparent_vertex_count: i32,
     opaque_source_ptr: usize,
-    transparent_source_ptr: usize,
     transparent_sorted: Vec<[f32; 7]>,
 }
 
@@ -54,7 +53,7 @@ impl FieldRenderer {
             Self {
                 program, vao, opaque_vbo, transparent_vbo,
                 opaque_vertex_count: 0, transparent_vertex_count: 0,
-                opaque_source_ptr: 0, transparent_source_ptr: 0,
+                opaque_source_ptr: 0,
                 transparent_sorted: Vec::new(),
             }
         }
@@ -121,7 +120,7 @@ impl FieldRenderer {
                 })
                 .collect::<Vec<_>>();
             triangle_order.sort_by(|a, b| b.0.total_cmp(&a.0));
-            self.transparent_sorted.reserve(vertices.len().saturating_sub(self.transparent_sorted.capacity()));
+            self.transparent_sorted.reserve(vertices.len());
             for (_, index) in triangle_order {
                 let start = index * 3;
                 self.transparent_sorted.extend_from_slice(&vertices[start..start + 3]);
