@@ -234,51 +234,67 @@ impl VisualizerApp {
 
     fn load_field_from_assets(&mut self) {
         let assets_dir = std::path::Path::new("assets");
-        let entries = match std::fs::read_dir(assets_dir) {
-            Ok(entries) => entries,
-            Err(error) => {
-                self.step_import_status = format!("Could not open assets/: {error}");
-                return;
-            }
-        };
-
+        let modular_dir = assets_dir.join("field");
         let mut candidates = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let supported = path.extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| matches!(extension.to_ascii_lowercase().as_str(), "step" | "stp" | "p21"))
-                .unwrap_or(false);
-            if supported {
-                candidates.push(path);
+
+        // Prefer the modular field directory. Each component is imported
+        // independently, then all meshes receive one shared alignment.
+        if let Ok(entries) = std::fs::read_dir(&modular_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let supported = path.is_file()
+                    && path.extension()
+                        .and_then(|extension| extension.to_str())
+                        .map(|extension| matches!(extension.to_ascii_lowercase().as_str(), "step" | "stp" | "p21"))
+                        .unwrap_or(false);
+                if supported {
+                    candidates.push(path);
+                }
             }
         }
 
-        candidates.sort_by_key(|path| {
-            let stem = path.file_stem()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            if stem.contains("field") { 0 } else { 1 }
-        });
+        // Backward-compatible fallback: use the previous single-file setup.
+        if candidates.is_empty() {
+            if let Ok(entries) = std::fs::read_dir(assets_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let supported = path.is_file()
+                        && path.extension()
+                            .and_then(|extension| extension.to_str())
+                            .map(|extension| matches!(extension.to_ascii_lowercase().as_str(), "step" | "stp" | "p21"))
+                            .unwrap_or(false);
+                    if supported {
+                        candidates.push(path);
+                    }
+                }
+            }
+            candidates.sort_by_key(|path| {
+                let stem = path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if stem.contains("field") { 0 } else { 1 }
+            });
+            candidates.truncate(1);
+        }
 
-        let Some(path) = candidates.first() else {
+        candidates.sort();
+        if candidates.is_empty() {
             self.step_import_status =
-                "No STEP field found. Put the field .step/.stp/.p21 file in assets/.".to_owned();
+                "No STEP files found. Put field components in assets/field/ (or a single STEP file in assets/).".to_owned();
             return;
-        };
+        }
 
-        let path = path.clone();
-        let display_path = path.display().to_string();
+        let display_names = candidates.iter()
+            .filter_map(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>()
+            .join(", ");
         let (sender, receiver) = mpsc::channel();
         self.step_load_receiver = Some(receiver);
-        self.step_import_status = format!("Loading {} in the background…", display_path);
+        self.step_import_status = format!("Loading {} field component(s): {} …", candidates.len(), display_names);
         std::thread::spawn(move || {
-            let result = crate::step_importer::load(&path)
-                .map_err(|error| format!("Could not load {}: {error}", path.display()));
+            let result = crate::step_importer::load_many(&candidates)
+                .map_err(|error| format!("Could not load field components: {error}"));
             let _ = sender.send(result);
         });
     }
