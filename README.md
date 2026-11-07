@@ -74,3 +74,10 @@ The field simulation stages 4 pollen at each of the four Flowers and 4 in each a
 - The Pollen panel displays the robot's current carried count.
 
 Flower pollen is stacked at the edge of each side of the field: bottom (96.5, 1.4), right (142.6, 96.5), top (47.5, 142.6), and left (1.4, 47.5). Each Flower stack contains four overlapping pollen pieces with progressively smaller display sizes. Flower pickups have a 0.5-second cooldown; Garden pickups do not. Garden pollen starts from the two opposite corners and extends inward along the edges. These are visualizer staging coordinates, not a surveyed field CAD model. This requested return-to-field shot behavior is a simulator mechanic; official BIOBUZZ scoring launches pollen into the upward-facing Hive cell.
+
+
+## STEP CAD field importer
+
+The 3D view can load STEP / STP / P21 CAD assemblies with **Load STEP** in the top bar. The importer tessellates part geometry, expands assembly instances with their placement transforms, applies STEP length units as inches, and uses source surface colours when available. **Use procedural field** restores the built-in fallback geometry. The 2D view and its renderer are unchanged.
+
+The reader is provided by `oxideav-step` (MIT), built with its standard-library-only feature set.

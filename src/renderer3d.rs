@@ -72,9 +72,13 @@ impl FieldRenderer {
         red_hives: [(f32, f32); 2],
         blue_hives: [(f32, f32); 2],
         pieces: &[(f32, f32, f32, [f32; 3])],
+        cad_vertices: Option<&[[f32; 6]]>,
     ) {
         use glow::HasContext as _;
         let mut mesh = Mesh::default();
+        if let Some(cad_vertices) = cad_vertices {
+            mesh.vertices.extend_from_slice(cad_vertices);
+        } else {
         // A dark green competition-floor surround sits outside the 12 ft square tile.
         mesh.cuboid([72.0,72.0,-1.25],[94.0,94.0,0.45],[0.10,0.17,0.10]);
         // 144 x 144 in light-gray field deck with a slightly raised edge lip.
@@ -160,6 +164,8 @@ impl FieldRenderer {
             mesh.beam([x+10.5,y+6.5,17.5],[x-10.5,y+6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
             mesh.beam([x-10.5,y+6.5,17.5],[x-10.5,y-6.5,17.5],0.25,0.25,[0.20,0.43,1.0]);
         }
+        }
+
         // Flower pollen remains represented by the live game-piece data only;
         // do not create separate decorative flower props at pollen spawn points.
         for (x,y,r,color) in pieces {

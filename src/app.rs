@@ -136,6 +136,8 @@ pub struct VisualizerApp {
     camera_pitch: f32,
     camera_distance: f32,
     renderer_3d: Option<Arc<egui::mutex::Mutex<crate::renderer3d::FieldRenderer>>>,
+    step_scene: Option<Arc<crate::step_importer::StepScene>>,
+    step_import_status: String,
 }
 
 impl Default for VisualizerApp {
@@ -212,6 +214,8 @@ impl Default for VisualizerApp {
             camera_pitch: 0.68,
             camera_distance: 245.0,
             renderer_3d: None,
+            step_scene: None,
+            step_import_status: "Procedural 3D field active. Load a STEP file to use CAD geometry.".to_owned(),
         }
     }
 }
@@ -1930,6 +1934,7 @@ impl VisualizerApp {
                 };
                 (piece.x, piece.y, piece.radius, color)
             }).collect::<Vec<_>>();
+            let cad_vertices = self.step_scene.as_ref().map(|scene| Arc::clone(&scene.vertices));
             painter.add(egui::PaintCallback {
                 rect,
                 callback: Arc::new(eframe::egui_glow::CallbackFn::new(move |_info, callback_painter| {
@@ -1940,6 +1945,7 @@ impl VisualizerApp {
                         [red_hives.0, red_hives.1],
                         [blue_hives.0, blue_hives.1],
                         &pieces,
+                        cad_vertices.as_ref().map(|vertices| vertices.as_slice()),
                     );
                 })),
             });
@@ -1951,6 +1957,8 @@ impl VisualizerApp {
 
         painter.text(rect.left_top() + Vec2::new(12.0, 10.0), Align2::LEFT_TOP,
             "BIOBUZZ · 3D FIELD", FontId::proportional(15.0), Color32::WHITE);
+        painter.text(rect.left_top() + Vec2::new(12.0, 31.0), Align2::LEFT_TOP,
+            &self.step_import_status, FontId::proportional(11.0), Color32::LIGHT_GRAY);
         painter.text(rect.left_bottom() + Vec2::new(12.0, -12.0), Align2::LEFT_BOTTOM,
             "Drag to orbit · Scroll to zoom · 144 in × 144 in",
             FontId::proportional(12.0), Color32::LIGHT_GRAY);
@@ -2529,6 +2537,34 @@ impl eframe::App for VisualizerApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.selectable_label(!self.three_d_mode, "2D Mode").clicked() { self.three_d_mode = false; }
                     if ui.selectable_label(self.three_d_mode, "3D Mode").clicked() { self.three_d_mode = true; }
+                    if self.three_d_mode && ui.button("Load STEP").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("STEP CAD model", &["step", "stp", "p21"])
+                            .pick_file()
+                        {
+                            match crate::step_importer::load(&path) {
+                                Ok(scene) => {
+                                    self.step_import_status = format!(
+                                        "CAD loaded: {} parts, {} instances, {} triangles",
+                                        scene.part_count, scene.occurrence_count, scene.triangle_count
+                                    );
+                                    if !scene.warnings.is_empty() {
+                                        self.step_import_status.push_str(&format!(
+                                            " · {} import warning(s)", scene.warnings.len()
+                                        ));
+                                    }
+                                    self.step_scene = Some(Arc::new(scene));
+                                }
+                                Err(error) => {
+                                    self.step_import_status = format!("STEP load failed: {error}");
+                                }
+                            }
+                        }
+                    }
+                    if self.three_d_mode && ui.button("Use procedural field").clicked() {
+                        self.step_scene = None;
+                        self.step_import_status = "Procedural 3D field active.".to_owned();
+                    }
                     if self.three_d_mode && ui.button("Reset camera").clicked() {
                         self.camera_yaw = -0.72;
                         self.camera_pitch = 0.68;
