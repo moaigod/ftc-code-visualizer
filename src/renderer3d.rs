@@ -10,6 +10,7 @@ pub struct FieldRenderer {
     transparent_vertex_count: i32,
     opaque_source_ptr: usize,
     transparent_source_ptr: usize,
+    transparent_sorted: Vec<[f32; 7]>,
 }
 
 impl FieldRenderer {
@@ -54,6 +55,7 @@ impl FieldRenderer {
                 program, vao, opaque_vbo, transparent_vbo,
                 opaque_vertex_count: 0, transparent_vertex_count: 0,
                 opaque_source_ptr: 0, transparent_source_ptr: 0,
+                transparent_sorted: Vec::new(),
             }
         }
     }
@@ -92,18 +94,6 @@ impl FieldRenderer {
             }
         }
 
-        let transparent_ptr = transparent_vertices.map_or(0, |v| v.as_ptr() as usize);
-        if let Some(vertices) = transparent_vertices {
-            if transparent_ptr != self.transparent_source_ptr || vertices.len() as i32 != self.transparent_vertex_count {
-                unsafe {
-                    gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.transparent_vbo));
-                    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(vertices), glow::STATIC_DRAW);
-                }
-                self.transparent_source_ptr = transparent_ptr;
-                self.transparent_vertex_count = vertices.len() as i32;
-            }
-        }
-
         let target = Vec3::new(72.0, 72.0, 0.0);
         let cp = camera_pitch.cos();
         let eye = target + Vec3::new(
@@ -114,6 +104,32 @@ impl FieldRenderer {
         let view = Mat4::look_at_rh(eye, target, Vec3::Z);
         let projection = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect_ratio.max(0.1), 0.1, 1000.0);
         let view_projection = projection * view;
+
+        // Transparent triangles must be drawn back-to-front. STEP assemblies
+        // commonly contain overlapping translucent panels, so source order
+        // alone can make them appear opaque or incorrectly layered.
+        self.transparent_sorted.clear();
+        if let Some(vertices) = transparent_vertices {
+            let mut triangle_order = vertices.chunks_exact(3).enumerate()
+                .map(|(index, triangle)| {
+                    let center = Vec3::new(
+                        (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3.0,
+                        (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3.0,
+                        (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3.0,
+                    );
+                    (center.distance_squared(eye), index)
+                })
+                .collect::<Vec<_>>();
+            triangle_order.sort_by(|a, b| b.0.total_cmp(&a.0));
+            self.transparent_sorted.reserve(vertices.len().saturating_sub(self.transparent_sorted.capacity()));
+            for (_, index) in triangle_order {
+                let start = index * 3;
+                self.transparent_sorted.extend_from_slice(&vertices[start..start + 3]);
+            }
+            self.transparent_vertex_count = self.transparent_sorted.len() as i32;
+        } else {
+            self.transparent_vertex_count = 0;
+        }
 
         unsafe {
             gl.enable(glow::DEPTH_TEST);
@@ -139,8 +155,14 @@ impl FieldRenderer {
             // but avoid depth writes so transparent surfaces do not hide one another.
             if self.transparent_vertex_count > 0 {
                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.transparent_vbo));
+                gl.buffer_data_u8_slice(
+                    glow::ARRAY_BUFFER,
+                    bytemuck::cast_slice(&self.transparent_sorted),
+                    glow::DYNAMIC_DRAW,
+                );
                 Self::set_vertex_layout(gl);
                 gl.enable(glow::BLEND);
+                gl.blend_equation(glow::FUNC_ADD);
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
                 gl.depth_mask(false);
                 gl.draw_arrays(glow::TRIANGLES, 0, self.transparent_vertex_count);
