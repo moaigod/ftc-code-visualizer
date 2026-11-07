@@ -215,7 +215,7 @@ impl Default for VisualizerApp {
             camera_distance: 245.0,
             renderer_3d: None,
             step_scene: None,
-            step_import_status: "Procedural 3D field active. Load a STEP file to use CAD geometry.".to_owned(),
+            step_import_status: "Looking for a STEP field in assets/…".to_owned(),
         }
     }
 }
@@ -226,7 +226,69 @@ impl VisualizerApp {
         if let Some(gl) = &cc.gl {
             app.renderer_3d = Some(Arc::new(egui::mutex::Mutex::new(crate::renderer3d::FieldRenderer::new(gl))));
         }
+        app.load_field_from_assets();
         app
+    }
+
+    fn load_field_from_assets(&mut self) {
+        let assets_dir = std::path::Path::new("assets");
+        let entries = match std::fs::read_dir(assets_dir) {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.step_import_status = format!("Could not open assets/: {error}");
+                return;
+            }
+        };
+
+        let mut candidates = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let supported = path.extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| matches!(extension.to_ascii_lowercase().as_str(), "step" | "stp" | "p21"))
+                .unwrap_or(false);
+            if supported {
+                candidates.push(path);
+            }
+        }
+
+        candidates.sort_by_key(|path| {
+            let stem = path.file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if stem.contains("field") { 0 } else { 1 }
+        });
+
+        let Some(path) = candidates.first() else {
+            self.step_import_status =
+                "No STEP field found. Put the field .step/.stp/.p21 file in assets/.".to_owned();
+            return;
+        };
+
+        match crate::step_importer::load(path) {
+            Ok(scene) => {
+                self.step_import_status = format!(
+                    "Field loaded: {} parts, {} instances, {} triangles · {}",
+                    scene.part_count, scene.occurrence_count, scene.triangle_count,
+                    scene.alignment
+                );
+                if !scene.warnings.is_empty() {
+                    self.step_import_status.push_str(&format!(
+                        " · {} import warning(s)", scene.warnings.len()
+                    ));
+                }
+                self.step_scene = Some(Arc::new(scene));
+            }
+            Err(error) => {
+                self.step_import_status = format!(
+                    "Could not load {}: {error}", path.display()
+                );
+            }
+        }
     }
 
     fn reset(&mut self) {
@@ -2561,10 +2623,6 @@ impl eframe::App for VisualizerApp {
                                 }
                             }
                         }
-                    }
-                    if self.three_d_mode && ui.button("Use procedural field").clicked() {
-                        self.step_scene = None;
-                        self.step_import_status = "Procedural 3D field active.".to_owned();
                     }
                     if self.three_d_mode && ui.button("Reset camera").clicked() {
                         self.camera_yaw = -0.72;
