@@ -121,7 +121,7 @@ impl FieldRenderer {
                 .collect::<Vec<_>>();
             // Farther geometry has a smaller signed depth along the view
             // direction. Sort far-to-near for alpha compositing.
-            triangle_order.sort_by(|a, b| a.0.total_cmp(&b.0));
+            triangle_order.sort_by(|a, b| b.0.total_cmp(&a.0));
             self.transparent_sorted.reserve(vertices.len());
             for (_, index) in triangle_order {
                 let start = index * 3;
