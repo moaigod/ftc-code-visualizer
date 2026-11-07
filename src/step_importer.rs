@@ -52,6 +52,11 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         return Err("The STEP file was parsed, but no visible triangles were produced.".to_owned());
     }
 
+    // CAD assemblies are often authored around the world origin. Recenter the
+    // imported field and fit its horizontal bounds to the simulator's 144 in
+    // coordinate system so the robot, hives, and game pieces share one frame.
+    fit_to_field(&mut vertices);
+
     let triangle_count = vertices.len() / 3;
     Ok(StepScene {
         vertices: Arc::new(vertices),
@@ -129,4 +134,28 @@ fn append_occurrence(
 
     active_parts.remove(&occurrence.part);
     Ok(())
+}
+
+fn fit_to_field(vertices: &mut [[f32; 6]]) {
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for vertex in vertices.iter() {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(vertex[axis]);
+            max[axis] = max[axis].max(vertex[axis]);
+        }
+    }
+
+    let width = (max[0] - min[0]).max(0.001);
+    let depth = (max[1] - min[1]).max(0.001);
+    let scale = (144.0 / width).min(144.0 / depth);
+    let offset_x = 72.0 - (min[0] + max[0]) * 0.5 * scale;
+    let offset_y = 72.0 - (min[1] + max[1]) * 0.5 * scale;
+    let offset_z = -min[2] * scale;
+
+    for vertex in vertices {
+        vertex[0] = vertex[0] * scale + offset_x;
+        vertex[1] = vertex[1] * scale + offset_y;
+        vertex[2] = vertex[2] * scale + offset_z;
+    }
 }
