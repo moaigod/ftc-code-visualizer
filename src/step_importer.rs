@@ -199,7 +199,22 @@ fn append_occurrence(
                 .or_else(|| shape.triangle_colours.get(triangle_index).and_then(|colour| *colour))
                 .or(shape.colour)
                 .unwrap_or([0.62, 0.64, 0.62, 1.0]);
-            let rgba = [colour[0], colour[1], colour[2], colour[3].clamp(0.0, 1.0)];
+            // Some CAD exporters preserve RGB appearance but omit STEP alpha
+            // entities entirely. Treat neutral near-white materials as glass/
+            // translucent panels so those parts remain visible without hiding
+            // geometry behind them. Coloured and medium/dark grey materials
+            // retain their source alpha.
+            const WHITE_MATERIAL_ALPHA: f32 = 0.35;
+            let source_alpha = colour[3].clamp(0.0, 1.0);
+            let min_rgb = colour[0].min(colour[1]).min(colour[2]);
+            let max_rgb = colour[0].max(colour[1]).max(colour[2]);
+            let is_neutral_white = min_rgb >= 0.86 && (max_rgb - min_rgb) <= 0.08;
+            let alpha = if is_neutral_white {
+                source_alpha.min(WHITE_MATERIAL_ALPHA)
+            } else {
+                source_alpha
+            };
+            let rgba = [colour[0], colour[1], colour[2], alpha];
             let output = if rgba[3] < 0.999 { &mut *transparent_output } else { &mut *opaque_output };
 
             for &vertex_index in triangle {
