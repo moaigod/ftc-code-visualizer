@@ -64,6 +64,8 @@ pub fn load_many(paths: &[std::path::PathBuf]) -> Result<StepScene, String> {
         }
 
         let before = opaque_vertices.len() + transparent_vertices.len();
+        let white_transparency_enabled = !path.file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Hive Support.step"));
         let mut active_parts = HashSet::new();
         let mut file_occurrences = 0usize;
         for root in &model.roots {
@@ -72,6 +74,7 @@ pub fn load_many(paths: &[std::path::PathBuf]) -> Result<StepScene, String> {
                 root,
                 &Transform::IDENTITY,
                 inches_per_model_unit,
+                white_transparency_enabled,
                 &[],
                 &mut active_parts,
                 &mut file_occurrences,
@@ -146,6 +149,7 @@ fn append_occurrence(
     occurrence: &oxideav_step::Occurrence,
     parent_transform: &Transform,
     inches_per_model_unit: f64,
+    white_transparency_enabled: bool,
     parent_occurrence_path: &[u64],
     active_parts: &mut HashSet<usize>,
     occurrence_count: &mut usize,
@@ -209,7 +213,7 @@ fn append_occurrence(
             let min_rgb = colour[0].min(colour[1]).min(colour[2]);
             let max_rgb = colour[0].max(colour[1]).max(colour[2]);
             let is_neutral_white = min_rgb >= 0.86 && (max_rgb - min_rgb) <= 0.08;
-            let alpha = if is_neutral_white {
+            let alpha = if white_transparency_enabled && is_neutral_white {
                 source_alpha.min(WHITE_MATERIAL_ALPHA)
             } else {
                 source_alpha
@@ -239,6 +243,7 @@ fn append_occurrence(
             child,
             &world_transform,
             inches_per_model_unit,
+            white_transparency_enabled,
             &occurrence_path,
             active_parts,
             occurrence_count,
