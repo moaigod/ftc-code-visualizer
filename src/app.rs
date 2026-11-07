@@ -2914,7 +2914,13 @@ impl eframe::App for VisualizerApp {
                 }
             });
             ui.add_space(12.0); ui.separator(); ui.heading("Field status");
-            ui.label("144 × 144 inches"); ui.label("Background: supplied field screenshot");
+            ui.label("144 × 144 inches");
+            ui.label("Background: supplied field screenshot");
+            if self.three_d_mode {
+                ui.separator();
+                ui.label("3D CAD import");
+                ui.label(&self.step_import_status);
+            }
                 });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
