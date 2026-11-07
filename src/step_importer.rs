@@ -25,12 +25,17 @@ pub struct StepScene {
 }
 
 pub fn load(path: &Path) -> Result<StepScene, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-    // Use a deliberately coarser tessellation for an interactive field view.
-    // This reduces curved-surface triangle counts while retaining the overall
-    // shape of field structures. AP242 files that already contain triangles
-    // cannot be re-tessellated by this setting.
+    load_many(&[path.to_path_buf()])
+}
+
+/// Load multiple STEP exports in their shared source coordinate system.
+/// Each file is parsed independently, but all geometry receives one common
+/// field-fit transform so separate exports remain aligned with one another.
+pub fn load_many(paths: &[std::path::PathBuf]) -> Result<StepScene, String> {
+    if paths.is_empty() {
+        return Err("No STEP files were provided.".to_owned());
+    }
+
     let options = oxideav_step::ReadOptions {
         tolerance: oxideav_step::Tolerance {
             relative: 0.01,
@@ -39,41 +44,59 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         },
         ..Default::default()
     };
-    let model = oxideav_step::read_step_with(&bytes, &options)
-        .map_err(|error| format!("STEP import failed: {error}"))?;
 
-    let inches_per_model_unit = model.length_unit_metres * 39.370_078_740_157_48;
-    if !inches_per_model_unit.is_finite() || inches_per_model_unit <= 0.0 {
-        return Err("The STEP file declares an invalid length unit.".to_owned());
-    }
-
-    let mut opaque_vertices = Vec::with_capacity(model.triangle_count().saturating_mul(3));
+    let mut opaque_vertices = Vec::new();
     let mut transparent_vertices = Vec::new();
-    let mut active_parts = HashSet::new();
+    let mut part_count = 0usize;
     let mut occurrence_count = 0usize;
+    let mut warnings = Vec::new();
+    let mut loaded_files = 0usize;
 
-    for root in &model.roots {
-        append_occurrence(
-            &model,
-            root,
-            &Transform::IDENTITY,
-            inches_per_model_unit,
-            &mut active_parts,
-            &mut occurrence_count,
-            &mut opaque_vertices,
-            &mut transparent_vertices,
-            0,
-        )?;
+    for path in paths {
+        let bytes = std::fs::read(path)
+            .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+        let model = oxideav_step::read_step_with(&bytes, &options)
+            .map_err(|error| format!("STEP import failed for {}: {error}", path.display()))?;
+        let inches_per_model_unit = model.length_unit_metres * 39.370_078_740_157_48;
+        if !inches_per_model_unit.is_finite() || inches_per_model_unit <= 0.0 {
+            warnings.push(format!("{} declares an invalid length unit and was skipped.", path.display()));
+            continue;
+        }
+
+        let before = opaque_vertices.len() + transparent_vertices.len();
+        let mut active_parts = HashSet::new();
+        let mut file_occurrences = 0usize;
+        for root in &model.roots {
+            append_occurrence(
+                &model,
+                root,
+                &Transform::IDENTITY,
+                inches_per_model_unit,
+                &mut active_parts,
+                &mut file_occurrences,
+                &mut opaque_vertices,
+                &mut transparent_vertices,
+                0,
+            ).map_err(|error| format!("{}: {error}", path.display()))?;
+        }
+
+        if opaque_vertices.len() + transparent_vertices.len() == before {
+            warnings.push(format!("{} contained no visible triangles.", path.display()));
+        } else {
+            loaded_files += 1;
+        }
+        part_count += model.parts.len();
+        occurrence_count += file_occurrences;
+        warnings.extend(model.warnings.into_iter().map(|warning| format!("{}: {}", path.file_name().unwrap_or_default().to_string_lossy(), warning)));
     }
 
     if opaque_vertices.is_empty() && transparent_vertices.is_empty() {
-        return Err("The STEP file was parsed, but no visible triangles were produced.".to_owned());
+        return Err("The STEP files were parsed, but no visible triangles were produced.".to_owned());
     }
 
-    // Fit both material groups using shared bounds, then collapse sub-quarter-inch
-    // tessellation detail. This is a display mesh, not an engineering export:
-    // 0.25 in vertex clustering keeps field-scale structure while removing
-    // excessive AP242 tessellation density.
+    // Apply one shared fit after every component has been combined. This is
+    // essential: fitting each STEP independently would destroy their relative
+    // positions and sizes.
     let alignment = fit_material_groups(&mut opaque_vertices, &mut transparent_vertices);
     let opaque_before = opaque_vertices.len() / 3;
     let transparent_before = transparent_vertices.len() / 3;
@@ -87,14 +110,14 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
     let transparent_max_alpha = transparent_vertices.iter()
         .map(|vertex| vertex[6])
         .fold(0.0_f32, f32::max);
-    let mut warnings = model.warnings;
     if transparent_vertices.is_empty() {
         warnings.push("No alpha-transparent triangles were identified in the STEP styles.".to_owned());
     } else if transparent_min_alpha >= 0.999 {
         warnings.push("Transparent geometry has no usable alpha values.".to_owned());
     }
     warnings.push(format!(
-        "Display mesh: {triangle_count} triangles (opaque {opaque_before}→{}, transparent {transparent_before}→{}) · removed {} tiny/degenerate faces · transparent alpha {:.2}–{:.2}",
+        "Loaded {loaded_files}/{} STEP files · display mesh: {triangle_count} triangles (opaque {opaque_before}→{}, transparent {transparent_before}→{}) · removed {} tiny/degenerate faces · transparent alpha {:.2}–{:.2}",
+        paths.len(),
         opaque_vertices.len() / 3,
         transparent_vertices.len() / 3,
         opaque_removed + transparent_removed,
@@ -104,7 +127,7 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
     Ok(StepScene {
         opaque_vertices: Arc::new(opaque_vertices),
         transparent_vertices: Arc::new(transparent_vertices),
-        part_count: model.parts.len(),
+        part_count,
         occurrence_count,
         triangle_count,
         alignment,
