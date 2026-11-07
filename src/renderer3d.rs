@@ -6,8 +6,11 @@ pub struct FieldRenderer {
     vao: glow::VertexArray,
     vbo: glow::Buffer,
     cad_vbo: glow::Buffer,
+    transparent_vbo: glow::Buffer,
     cad_vertex_count: i32,
+    transparent_vertex_count: i32,
     cad_source_ptr: usize,
+    transparent_source_ptr: usize,
 }
 
 impl FieldRenderer {
@@ -19,15 +22,19 @@ impl FieldRenderer {
                 layout(location = 0) in vec3 a_position;
                 layout(location = 1) in vec3 a_color;
                 uniform mat4 u_view_projection;
+                layout(location = 2) in float a_alpha;
                 out vec3 v_color;
+                out float v_alpha;
                 void main() {
                     v_color = a_color;
+                    v_alpha = a_alpha;
                     gl_Position = u_view_projection * vec4(a_position, 1.0);
                 }"#;
             let fragment_source = r#"#version 330
                 in vec3 v_color;
+                in float v_alpha;
                 out vec4 out_color;
-                void main() { out_color = vec4(v_color, 1.0); }"#;
+                void main() { out_color = vec4(v_color, v_alpha); }"#;
             let mut shaders = Vec::new();
             for (kind, source) in [(glow::VERTEX_SHADER, vertex_source), (glow::FRAGMENT_SHADER, fragment_source)] {
                 let shader = gl.create_shader(kind).expect("create 3D field shader");
@@ -43,6 +50,7 @@ impl FieldRenderer {
             let vao = gl.create_vertex_array().expect("create 3D field VAO");
             let vbo = gl.create_buffer().expect("create 3D dynamic VBO");
             let cad_vbo = gl.create_buffer().expect("create 3D CAD VBO");
+            let transparent_vbo = gl.create_buffer().expect("create 3D transparent CAD VBO");
             gl.bind_vertex_array(Some(vao));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
             gl.enable_vertex_attrib_array(0);
@@ -51,9 +59,11 @@ impl FieldRenderer {
             gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
             gl.bind_vertex_array(None);
             Self {
-                program, vao, vbo, cad_vbo,
+                program, vao, vbo, cad_vbo, transparent_vbo,
                 cad_vertex_count: 0,
+                transparent_vertex_count: 0,
                 cad_source_ptr: 0,
+                transparent_source_ptr: 0,
             }
         }
     }
@@ -65,6 +75,7 @@ impl FieldRenderer {
             gl.delete_vertex_array(self.vao);
             gl.delete_buffer(self.vbo);
             gl.delete_buffer(self.cad_vbo);
+            gl.delete_buffer(self.transparent_vbo);
         }
     }
 
@@ -81,7 +92,8 @@ impl FieldRenderer {
         red_hives: [(f32, f32); 2],
         blue_hives: [(f32, f32); 2],
         pieces: &[(f32, f32, f32, [f32; 3])],
-        cad_vertices: Option<&[[f32; 6]]>,
+        cad_vertices: Option<&[[f32; 7]]>,
+        transparent_vertices: Option<&[[f32; 7]]>,
     ) {
         use glow::HasContext as _;
         let mut mesh = Mesh::default();
@@ -94,11 +106,7 @@ impl FieldRenderer {
             if cad_source_ptr != self.cad_source_ptr || vertices.len() as i32 != self.cad_vertex_count {
                 unsafe {
                     gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.cad_vbo));
-                    gl.buffer_data_u8_slice(
-                        glow::ARRAY_BUFFER,
-                        bytemuck::cast_slice(vertices),
-                        glow::STATIC_DRAW,
-                    );
+                    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(vertices), glow::STATIC_DRAW);
                 }
                 self.cad_source_ptr = cad_source_ptr;
                 self.cad_vertex_count = vertices.len() as i32;
@@ -106,6 +114,20 @@ impl FieldRenderer {
         } else {
             self.cad_source_ptr = 0;
             self.cad_vertex_count = 0;
+        }
+        let transparent_source_ptr = transparent_vertices.map_or(0, |vertices| vertices.as_ptr() as usize);
+        if let Some(vertices) = transparent_vertices {
+            if transparent_source_ptr != self.transparent_source_ptr || vertices.len() as i32 != self.transparent_vertex_count {
+                unsafe {
+                    gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.transparent_vbo));
+                    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(vertices), glow::STATIC_DRAW);
+                }
+                self.transparent_source_ptr = transparent_source_ptr;
+                self.transparent_vertex_count = vertices.len() as i32;
+            }
+        } else {
+            self.transparent_source_ptr = 0;
+            self.transparent_vertex_count = 0;
         }
 
         // Flower pollen remains represented by the live game-piece data only;
@@ -131,6 +153,19 @@ impl FieldRenderer {
         let projection = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect_ratio.max(0.1), 0.1, 1000.0);
         let view_projection = projection * view;
 
+        // Transparent triangles are sorted far-to-near for conventional alpha blending.
+        let mut sorted_transparent = transparent_vertices.unwrap_or(&[]).chunks_exact(3).map(|tri| {
+            let depth = tri.iter().map(|v| {
+                let delta = Vec3::new(v[0], v[1], v[2]) - eye;
+                delta.length_squared()
+            }).sum::<f32>() / 3.0;
+            (depth, tri)
+        }).collect::<Vec<_>>();
+        sorted_transparent.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let sorted_transparent = sorted_transparent.into_iter()
+            .flat_map(|(_, tri)| tri.iter().copied())
+            .collect::<Vec<_>>();
+
         unsafe {
             gl.enable(glow::DEPTH_TEST);
             gl.depth_func(glow::LESS);
@@ -145,15 +180,34 @@ impl FieldRenderer {
             // Draw the cached CAD field without re-uploading it.
             if self.cad_vertex_count > 0 {
                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.cad_vbo));
-                gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 24, 0);
-                gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
+                gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 28, 0);
+                gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 28, 12);
+                gl.vertex_attrib_pointer_f32(2, 1, glow::FLOAT, false, 28, 24);
                 gl.draw_arrays(glow::TRIANGLES, 0, self.cad_vertex_count);
             }
 
             // Only the robot and moving game pieces use the per-frame buffer.
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.transparent_vbo));
+            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 28, 0);
+            gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 28, 12);
+            gl.vertex_attrib_pointer_f32(2, 1, glow::FLOAT, false, 28, 24);
+            if !sorted_transparent.is_empty() {
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                gl.depth_mask(false);
+                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&sorted_transparent), glow::DYNAMIC_DRAW);
+                gl.draw_arrays(glow::TRIANGLES, 0, sorted_transparent.len() as i32);
+                gl.depth_mask(true);
+                gl.disable(glow::BLEND);
+            }
+
+            // Dynamic robot and game pieces use the compact opaque vertex format.
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
             gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 24, 0);
             gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
+            gl.vertex_attrib_pointer_f32(2, 1, glow::FLOAT, false, 24, 20);
+            gl.disable_vertex_attrib_array(2);
+            gl.vertex_attrib1_f32(2, 1.0);
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&mesh.vertices), glow::DYNAMIC_DRAW);
             gl.draw_arrays(glow::TRIANGLES, 0, mesh.vertices.len() as i32);
             gl.bind_vertex_array(None);
