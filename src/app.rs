@@ -292,9 +292,8 @@ impl VisualizerApp {
                     scene.part_count, scene.occurrence_count, scene.triangle_count, scene.alignment
                 );
                 if !scene.warnings.is_empty() {
-                    self.step_import_status.push_str(&format!(
-                        " · {} import warning(s)", scene.warnings.len()
-                    ));
+                    self.step_import_status.push_str(" · ");
+                    self.step_import_status.push_str(&scene.warnings.join(" · "));
                 }
                 self.step_scene = Some(Arc::new(scene));
             }
