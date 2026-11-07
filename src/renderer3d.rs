@@ -5,6 +5,9 @@ pub struct FieldRenderer {
     program: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
+    cad_vbo: glow::Buffer,
+    cad_vertex_count: i32,
+    cad_source_ptr: usize,
 }
 
 impl FieldRenderer {
@@ -38,7 +41,8 @@ impl FieldRenderer {
             assert!(gl.get_program_link_status(program), "3D field shader link failed: {}", gl.get_program_info_log(program));
             for shader in shaders { gl.detach_shader(program, shader); gl.delete_shader(shader); }
             let vao = gl.create_vertex_array().expect("create 3D field VAO");
-            let vbo = gl.create_buffer().expect("create 3D field VBO");
+            let vbo = gl.create_buffer().expect("create 3D dynamic VBO");
+            let cad_vbo = gl.create_buffer().expect("create 3D CAD VBO");
             gl.bind_vertex_array(Some(vao));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
             gl.enable_vertex_attrib_array(0);
@@ -46,7 +50,11 @@ impl FieldRenderer {
             gl.enable_vertex_attrib_array(1);
             gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
             gl.bind_vertex_array(None);
-            Self { program, vao, vbo }
+            Self {
+                program, vao, vbo, cad_vbo,
+                cad_vertex_count: 0,
+                cad_source_ptr: 0,
+            }
         }
     }
 
@@ -56,11 +64,12 @@ impl FieldRenderer {
             gl.delete_program(self.program);
             gl.delete_vertex_array(self.vao);
             gl.delete_buffer(self.vbo);
+            gl.delete_buffer(self.cad_vbo);
         }
     }
 
     pub fn paint(
-        &self,
+        &mut self,
         gl: &glow::Context,
         camera_yaw: f32,
         camera_pitch: f32,
@@ -76,8 +85,27 @@ impl FieldRenderer {
     ) {
         use glow::HasContext as _;
         let mut mesh = Mesh::default();
-        if let Some(cad_vertices) = cad_vertices {
-            mesh.vertices.extend_from_slice(cad_vertices);
+
+        // The CAD field is static. Upload it only when a different STEP scene
+        // is loaded, rather than copying millions of vertices into a dynamic
+        // buffer on every repaint.
+        let cad_source_ptr = cad_vertices.map_or(0, |vertices| vertices.as_ptr() as usize);
+        if let Some(vertices) = cad_vertices {
+            if cad_source_ptr != self.cad_source_ptr || vertices.len() as i32 != self.cad_vertex_count {
+                unsafe {
+                    gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.cad_vbo));
+                    gl.buffer_data_u8_slice(
+                        glow::ARRAY_BUFFER,
+                        bytemuck::cast_slice(vertices),
+                        glow::STATIC_DRAW,
+                    );
+                }
+                self.cad_source_ptr = cad_source_ptr;
+                self.cad_vertex_count = vertices.len() as i32;
+            }
+        } else {
+            self.cad_source_ptr = 0;
+            self.cad_vertex_count = 0;
         }
 
         // Flower pollen remains represented by the live game-piece data only;
@@ -113,9 +141,21 @@ impl FieldRenderer {
                 gl.uniform_matrix_4_f32_slice(Some(&location),false,&view_projection.to_cols_array());
             }
             gl.bind_vertex_array(Some(self.vao));
-            gl.bind_buffer(glow::ARRAY_BUFFER,Some(self.vbo));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER,bytemuck::cast_slice(&mesh.vertices),glow::DYNAMIC_DRAW);
-            gl.draw_arrays(glow::TRIANGLES,0,(mesh.vertices.len()) as i32);
+
+            // Draw the cached CAD field without re-uploading it.
+            if self.cad_vertex_count > 0 {
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.cad_vbo));
+                gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 24, 0);
+                gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
+                gl.draw_arrays(glow::TRIANGLES, 0, self.cad_vertex_count);
+            }
+
+            // Only the robot and moving game pieces use the per-frame buffer.
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 24, 0);
+            gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&mesh.vertices), glow::DYNAMIC_DRAW);
+            gl.draw_arrays(glow::TRIANGLES, 0, mesh.vertices.len() as i32);
             gl.bind_vertex_array(None);
             gl.use_program(None);
             gl.disable(glow::DEPTH_TEST);
