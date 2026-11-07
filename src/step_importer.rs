@@ -64,8 +64,15 @@ pub fn load_many(paths: &[std::path::PathBuf]) -> Result<StepScene, String> {
         }
 
         let before = opaque_vertices.len() + transparent_vertices.len();
-        let white_transparency_enabled = !path.file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case("Hive Support.step"));
+        let file_name = path.file_name().unwrap_or_default();
+        // Keep white structural pieces in the hive assemblies and their support opaque.
+        let white_transparency_enabled = ![
+            "Hive Support.step",
+            "Red Hive.step",
+            "Blue Hive.step",
+        ]
+        .iter()
+        .any(|excluded| file_name.eq_ignore_ascii_case(excluded));
         let mut active_parts = HashSet::new();
         let mut file_occurrences = 0usize;
         for root in &model.roots {
