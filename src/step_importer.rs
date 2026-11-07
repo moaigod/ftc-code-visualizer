@@ -17,6 +17,8 @@ pub struct StepScene {
     pub part_count: usize,
     pub occurrence_count: usize,
     pub triangle_count: usize,
+    /// Summary of the detected source axes and field-fit transform.
+    pub alignment: String,
     pub warnings: Vec<String>,
 }
 
@@ -52,10 +54,10 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         return Err("The STEP file was parsed, but no visible triangles were produced.".to_owned());
     }
 
-    // CAD assemblies are often authored around the world origin. Recenter the
-    // imported field and fit its horizontal bounds to the simulator's 144 in
-    // coordinate system so the robot, hives, and game pieces share one frame.
-    fit_to_field(&mut vertices);
+    // STEP files may use X-up, Y-up, or Z-up depending on the CAD authoring
+    // convention. Detect the thin (vertical) axis from the complete assembly
+    // bounds, then map the two broad axes into the simulator's X/Y plane.
+    let alignment = fit_to_field(&mut vertices);
 
     let triangle_count = vertices.len() / 3;
     Ok(StepScene {
@@ -63,6 +65,7 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         part_count: model.parts.len(),
         occurrence_count,
         triangle_count,
+        alignment,
         warnings: model.warnings,
     })
 }
@@ -136,7 +139,7 @@ fn append_occurrence(
     Ok(())
 }
 
-fn fit_to_field(vertices: &mut [[f32; 6]]) {
+fn fit_to_field(vertices: &mut [[f32; 6]]) -> String {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
     for vertex in vertices.iter() {
@@ -146,16 +149,44 @@ fn fit_to_field(vertices: &mut [[f32; 6]]) {
         }
     }
 
-    let width = (max[0] - min[0]).max(0.001);
-    let depth = (max[1] - min[1]).max(0.001);
-    let scale = (144.0 / width).min(144.0 / depth);
-    let offset_x = 72.0 - (min[0] + max[0]) * 0.5 * scale;
-    let offset_y = 72.0 - (min[1] + max[1]) * 0.5 * scale;
-    let offset_z = -min[2] * scale;
+    let extent = [
+        (max[0] - min[0]).max(0.001),
+        (max[1] - min[1]).max(0.001),
+        (max[2] - min[2]).max(0.001),
+    ];
+    let vertical_axis = (0..3)
+        .min_by(|a, b| extent[*a].total_cmp(&extent[*b]))
+        .unwrap_or(2);
+    let horizontal_axes: Vec<usize> = (0..3)
+        .filter(|axis| *axis != vertical_axis)
+        .collect();
+    let x_axis = horizontal_axes[0];
+    let y_axis = horizontal_axes[1];
+
+    // Use one uniform scale so structural proportions and vertical heights
+    // remain faithful. Center the footprint in the 144-inch field and put its
+    // lowest CAD point on the simulator floor (Z = 0).
+    let scale = (144.0 / extent[x_axis]).min(144.0 / extent[y_axis]);
+    let center_x = (min[x_axis] + max[x_axis]) * 0.5;
+    let center_y = (min[y_axis] + max[y_axis]) * 0.5;
+    let floor = min[vertical_axis];
 
     for vertex in vertices {
-        vertex[0] = vertex[0] * scale + offset_x;
-        vertex[1] = vertex[1] * scale + offset_y;
-        vertex[2] = vertex[2] * scale + offset_z;
+        let source = [vertex[0], vertex[1], vertex[2]];
+        vertex[0] = (source[x_axis] - center_x) * scale + 72.0;
+        vertex[1] = (source[y_axis] - center_y) * scale + 72.0;
+        vertex[2] = (source[vertical_axis] - floor) * scale;
     }
+
+    let aspect = extent[x_axis].max(extent[y_axis])
+        / extent[x_axis].min(extent[y_axis]).max(0.001);
+    let axis_name = ["X", "Y", "Z"];
+    format!(
+        "Auto-aligned {}-up CAD · source footprint {:.1} × {:.1} in · fit {:.4}× · aspect {:.3}",
+        axis_name[vertical_axis],
+        extent[x_axis] * 39.370_078_7,
+        extent[y_axis] * 39.370_078_7,
+        scale,
+        aspect,
+    )
 }
