@@ -70,10 +70,15 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         return Err("The STEP file was parsed, but no visible triangles were produced.".to_owned());
     }
 
-    // Fit both material groups using shared bounds, but transform each in place.
-    // Building a combined temporary vector here used to duplicate the entire
-    // multi-million-triangle model in RAM during import.
+    // Fit both material groups using shared bounds, then collapse sub-quarter-inch
+    // tessellation detail. This is a display mesh, not an engineering export:
+    // 0.25 in vertex clustering keeps field-scale structure while removing
+    // excessive AP242 tessellation density.
     let alignment = fit_material_groups(&mut opaque_vertices, &mut transparent_vertices);
+    let opaque_before = opaque_vertices.len() / 3;
+    let transparent_before = transparent_vertices.len() / 3;
+    let opaque_removed = simplify_display_mesh(&mut opaque_vertices, 0.25, 0.0008);
+    let transparent_removed = simplify_display_mesh(&mut transparent_vertices, 0.25, 0.0008);
 
     let triangle_count = (opaque_vertices.len() + transparent_vertices.len()) / 3;
     let transparent_min_alpha = transparent_vertices.iter()
@@ -89,8 +94,12 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         warnings.push("Transparent geometry has no usable alpha values.".to_owned());
     }
     warnings.push(format!(
-        "Mesh quality: reduced · transparent vertices: {} · alpha range: {:.2}–{:.2}",
-        transparent_vertices.len(), transparent_min_alpha, transparent_max_alpha
+        "Display mesh: {triangle_count} triangles (opaque {opaque_before}→{}, transparent {transparent_before}→{}) · removed {} tiny/degenerate faces · transparent alpha {:.2}–{:.2}",
+        opaque_vertices.len() / 3,
+        transparent_vertices.len() / 3,
+        opaque_removed + transparent_removed,
+        transparent_min_alpha,
+        transparent_max_alpha,
     ));
     Ok(StepScene {
         opaque_vertices: Arc::new(opaque_vertices),
@@ -173,6 +182,47 @@ fn append_occurrence(
 
     active_parts.remove(&occurrence.part);
     Ok(())
+}
+
+/// Reduce tessellation for a field-scale display. Each triangle is snapped to
+/// a regular 3D grid; triangles that collapse or become visually negligible
+/// are discarded. Colours and alpha remain attached to their original face.
+fn simplify_display_mesh(vertices: &mut Vec<[f32; 7]>, grid: f32, min_area: f32) -> usize {
+    let mut simplified = Vec::with_capacity(vertices.len());
+    let mut removed = 0usize;
+
+    for triangle in vertices.chunks_exact(3) {
+        let mut snapped = [[0.0_f32; 7]; 3];
+        for corner in 0..3 {
+            snapped[corner] = triangle[corner];
+            for axis in 0..3 {
+                snapped[corner][axis] = (triangle[corner][axis] / grid).round() * grid;
+            }
+        }
+
+        let same = |a: &[f32; 7], b: &[f32; 7]| {
+            a[0] == b[0] && a[1] == b[1] && a[2] == b[2]
+        };
+        if same(&snapped[0], &snapped[1]) || same(&snapped[1], &snapped[2]) || same(&snapped[2], &snapped[0]) {
+            removed += 1;
+            continue;
+        }
+
+        let a = glam::Vec3::new(snapped[0][0], snapped[0][1], snapped[0][2]);
+        let b = glam::Vec3::new(snapped[1][0], snapped[1][1], snapped[1][2]);
+        let d = glam::Vec3::new(snapped[2][0], snapped[2][1], snapped[2][2]);
+        let area = (b - a).cross(d - a).length() * 0.5;
+        if !area.is_finite() || area < min_area {
+            removed += 1;
+            continue;
+        }
+
+        simplified.extend_from_slice(&snapped);
+    }
+
+    vertices.clear();
+    *vertices = simplified;
+    removed
 }
 
 fn fit_material_groups(opaque: &mut [[f32; 7]], transparent: &mut [[f32; 7]]) -> String {
