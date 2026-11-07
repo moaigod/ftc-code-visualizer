@@ -105,25 +105,29 @@ pub fn load_many(paths: &[std::path::PathBuf]) -> Result<StepScene, String> {
     let transparent_removed = simplify_display_mesh(&mut transparent_vertices, 0.25, 0.0008);
 
     let triangle_count = (opaque_vertices.len() + transparent_vertices.len()) / 3;
-    let transparent_min_alpha = transparent_vertices.iter()
-        .map(|vertex| vertex[6])
-        .fold(1.0_f32, f32::min);
-    let transparent_max_alpha = transparent_vertices.iter()
-        .map(|vertex| vertex[6])
-        .fold(0.0_f32, f32::max);
-    if transparent_vertices.is_empty() {
-        warnings.push("No alpha-transparent triangles were identified in the STEP styles.".to_owned());
-    } else if transparent_min_alpha >= 0.999 {
-        warnings.push("Transparent geometry has no usable alpha values.".to_owned());
-    }
+    let transparent_alpha_range = if transparent_vertices.is_empty() {
+        warnings.push(
+            "No alpha-transparent triangles were identified in the STEP styles. The CAD export may omit transparency metadata, or its style chain may not be recognized.".to_owned()
+        );
+        "n/a".to_owned()
+    } else {
+        let min_alpha = transparent_vertices.iter()
+            .map(|vertex| vertex[6])
+            .fold(1.0_f32, f32::min);
+        let max_alpha = transparent_vertices.iter()
+            .map(|vertex| vertex[6])
+            .fold(0.0_f32, f32::max);
+        if min_alpha >= 0.999 {
+            warnings.push("Transparent geometry has no usable alpha values.".to_owned());
+        }
+        format!("{min_alpha:.2}–{max_alpha:.2}")
+    };
     warnings.push(format!(
-        "Loaded {loaded_files}/{} STEP files · display mesh: {triangle_count} triangles (opaque {opaque_before}→{}, transparent {transparent_before}→{}) · removed {} tiny/degenerate faces · transparent alpha {:.2}–{:.2}",
+        "Loaded {loaded_files}/{} STEP files · display mesh: {triangle_count} triangles (opaque {opaque_before}→{}, transparent {transparent_before}→{}) · removed {} tiny/degenerate faces · transparent alpha {transparent_alpha_range}",
         paths.len(),
         opaque_vertices.len() / 3,
         transparent_vertices.len() / 3,
         opaque_removed + transparent_removed,
-        transparent_min_alpha,
-        transparent_max_alpha,
     ));
     Ok(StepScene {
         opaque_vertices: Arc::new(opaque_vertices),
