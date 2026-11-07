@@ -141,7 +141,8 @@ fn append_occurrence(
             inches_per_model_unit,
             active_parts,
             occurrence_count,
-            output,
+            opaque_output,
+            transparent_output,
             depth + 1,
         )?;
     }
