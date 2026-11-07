@@ -70,14 +70,10 @@ pub fn load(path: &Path) -> Result<StepScene, String> {
         return Err("The STEP file was parsed, but no visible triangles were produced.".to_owned());
     }
 
-    // Fit both material groups together so they share exactly the same transform.
-    let mut all_vertices = Vec::with_capacity(opaque_vertices.len() + transparent_vertices.len());
-    all_vertices.extend_from_slice(&opaque_vertices);
-    all_vertices.extend_from_slice(&transparent_vertices);
-    let alignment = fit_to_field(&mut all_vertices);
-    let opaque_len = opaque_vertices.len();
-    opaque_vertices.copy_from_slice(&all_vertices[..opaque_len]);
-    transparent_vertices = all_vertices[opaque_len..].to_vec();
+    // Fit both material groups using shared bounds, but transform each in place.
+    // Building a combined temporary vector here used to duplicate the entire
+    // multi-million-triangle model in RAM during import.
+    let alignment = fit_material_groups(&mut opaque_vertices, &mut transparent_vertices);
 
     let triangle_count = (opaque_vertices.len() + transparent_vertices.len()) / 3;
     let transparent_min_alpha = transparent_vertices.iter()
@@ -179,10 +175,10 @@ fn append_occurrence(
     Ok(())
 }
 
-fn fit_to_field(vertices: &mut [[f32; 7]]) -> String {
+fn fit_material_groups(opaque: &mut [[f32; 7]], transparent: &mut [[f32; 7]]) -> String {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
-    for vertex in vertices.iter() {
+    for vertex in opaque.iter().chain(transparent.iter()) {
         for axis in 0..3 {
             min[axis] = min[axis].min(vertex[axis]);
             max[axis] = max[axis].max(vertex[axis]);
@@ -203,15 +199,12 @@ fn fit_to_field(vertices: &mut [[f32; 7]]) -> String {
     let x_axis = horizontal_axes[0];
     let y_axis = horizontal_axes[1];
 
-    // Use one uniform scale so structural proportions and vertical heights
-    // remain faithful. Center the footprint in the 144-inch field and put its
-    // lowest CAD point on the simulator floor (Z = 0).
     let scale = (144.0 / extent[x_axis]).min(144.0 / extent[y_axis]);
     let center_x = (min[x_axis] + max[x_axis]) * 0.5;
     let center_y = (min[y_axis] + max[y_axis]) * 0.5;
     let floor = min[vertical_axis];
 
-    for vertex in vertices {
+    for vertex in opaque.iter_mut().chain(transparent.iter_mut()) {
         let source = [vertex[0], vertex[1], vertex[2]];
         vertex[0] = (source[x_axis] - center_x) * scale + 72.0;
         vertex[1] = (source[y_axis] - center_y) * scale + 72.0;
@@ -223,10 +216,6 @@ fn fit_to_field(vertices: &mut [[f32; 7]]) -> String {
     let axis_name = ["X", "Y", "Z"];
     format!(
         "Auto-aligned {}-up CAD · source footprint {:.1} × {:.1} in · fit {:.4}× · aspect {:.3}",
-        axis_name[vertical_axis],
-        extent[x_axis],
-        extent[y_axis],
-        scale,
-        aspect,
+        axis_name[vertical_axis], extent[x_axis], extent[y_axis], scale, aspect,
     )
 }
