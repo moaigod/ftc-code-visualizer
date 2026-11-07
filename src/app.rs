@@ -2000,23 +2000,7 @@ impl VisualizerApp {
             let pitch = self.camera_pitch;
             let distance = self.camera_distance;
             let aspect = rect.width() / rect.height().max(1.0);
-            let robot_x = self.robot_x;
-            let robot_y = self.robot_y;
-            let heading = self.heading_deg;
-            let red_hives = hive_pair_centers(HiveSide::Red, self.red_hive_tipped);
-            let blue_hives = hive_pair_centers(HiveSide::Blue, self.blue_hive_tipped);
-            let pieces = self.field_pollen.iter().filter(|piece| !piece.scored).map(|piece| {
-                let color = match piece.kind {
-                    ElementKind::Pollen => [1.0, 0.82, 0.12],
-                    ElementKind::Nectar => match piece.hive {
-                        Some(HiveSide::Red) => [0.92, 0.16, 0.20],
-                        Some(HiveSide::Blue) => [0.18, 0.42, 0.95],
-                        None => [0.8, 0.8, 0.8],
-                    }
-                };
-                (piece.x, piece.y, piece.radius, color)
-            }).collect::<Vec<_>>();
-            let cad_vertices = self.step_scene.as_ref().map(|scene| Arc::clone(&scene.opaque_vertices));
+            let opaque_vertices = self.step_scene.as_ref().map(|scene| Arc::clone(&scene.opaque_vertices));
             let transparent_vertices = self.step_scene.as_ref().map(|scene| Arc::clone(&scene.transparent_vertices));
             painter.add(egui::PaintCallback {
                 rect,
@@ -2024,15 +2008,11 @@ impl VisualizerApp {
                     renderer.lock().paint(
                         callback_painter.gl(),
                         yaw, pitch, distance, aspect,
-                        robot_x, robot_y, heading,
-                        [red_hives.0, red_hives.1],
-                        [blue_hives.0, blue_hives.1],
-                        &pieces,
-                        cad_vertices.as_ref().map(|vertices| vertices.as_slice()),
+                        opaque_vertices.as_ref().map(|vertices| vertices.as_slice()),
                         transparent_vertices.as_ref().map(|vertices| vertices.as_slice()),
                     );
                 })),
-            });
+            });;
         } else {
             painter.text(rect.center(), Align2::CENTER_CENTER,
                 "3D renderer unavailable. Run with the OpenGL backend.",
